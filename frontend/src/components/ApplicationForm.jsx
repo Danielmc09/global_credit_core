@@ -105,9 +105,28 @@ function ApplicationForm({ onApplicationCreated }) {
         onApplicationCreated(response);
       }
     } catch (err) {
-      const errorMessage =
-        err.response?.data?.detail || 'Error creating application';
-      toast.error(errorMessage);
+      // Handle validation errors from FastAPI/Pydantic
+      const errorData = err.response?.data;
+      
+      if (errorData?.detail) {
+        // Check if detail is an array (validation errors) or a string (single error)
+        if (Array.isArray(errorData.detail)) {
+          // Multiple validation errors
+          const errorMessages = errorData.detail.map((error) => {
+            const field = error.loc?.slice(-1)[0] || 'field';
+            const message = error.msg || 'Validation error';
+            return `${field}: ${message}`;
+          });
+          toast.error(`Validation errors:\n${errorMessages.join('\n')}`, {
+            autoClose: 8000,
+          });
+        } else {
+          // Single error message
+          toast.error(errorData.detail);
+        }
+      } else {
+        toast.error(err.message || 'Error creating application');
+      }
     } finally {
       setLoading(false);
     }

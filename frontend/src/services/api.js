@@ -36,7 +36,32 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
-    console.error('API Error:', error.response?.data || error.message);
+    const errorData = error.response?.data;
+    const status = error.response?.status;
+    const url = error.config?.url;
+
+    // Format error message for console
+    if (errorData) {
+      if (status === 422 && Array.isArray(errorData.detail)) {
+        // Validation errors - format nicely
+        console.error(`API Validation Error (${status}) ${url}:`);
+        errorData.detail.forEach((err, index) => {
+          const field = err.loc?.slice(-1)[0] || 'unknown';
+          const message = err.msg || 'Validation error';
+          console.error(`  ${index + 1}. ${field}: ${message}`);
+        });
+      } else if (errorData.detail) {
+        // Single error message
+        console.error(`API Error (${status}) ${url}:`, errorData.detail);
+      } else {
+        // Other error formats
+        console.error(`API Error (${status}) ${url}:`, errorData);
+      }
+    } else {
+      // Network or other errors
+      console.error('API Error:', error.message || 'Unknown error');
+    }
+
     return Promise.reject(error);
   }
 );
