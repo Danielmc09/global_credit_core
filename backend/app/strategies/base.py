@@ -117,7 +117,8 @@ class BaseCountryStrategy(ABC):
             provider_func=self.banking_provider.fetch_banking_data,
             country=self.country_code,
             provider_name=provider_name,
-            *[document, full_name]
+            document=document,
+            full_name=full_name
         )
 
     @abstractmethod
@@ -190,10 +191,8 @@ class BaseCountryStrategy(ABC):
         Returns:
             Debt-to-income ratio as a percentage
         """
-        # Protect against division by zero
         if monthly_income <= 0:
             return Decimal('100.0')
-        # Additional safety check for very small values that could cause precision issues
         if abs(monthly_income) < Decimal('0.01'):
             return Decimal('100.0')
         return (monthly_debt / monthly_income) * Decimal('100.0')
@@ -214,17 +213,13 @@ class BaseCountryStrategy(ABC):
         Returns:
             Estimated payment-to-income ratio as a percentage
         """
-        # Protect against division by zero in loan term
         if loan_term_months <= 0:
             raise ValueError("Loan term must be greater than zero")
         
-        # Simple calculation: amount / term (without interest for simplicity)
         estimated_monthly_payment = requested_amount / Decimal(loan_term_months)
         
-        # Protect against division by zero in income
         if monthly_income <= 0:
             return Decimal('100.0')
-        # Additional safety check for very small values that could cause precision issues
         if abs(monthly_income) < Decimal('0.01'):
             return Decimal('100.0')
         return (estimated_monthly_payment / monthly_income) * Decimal('100.0')
