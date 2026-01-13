@@ -5,10 +5,14 @@ import ApplicationForm from './components/ApplicationForm';
 import ApplicationList from './components/ApplicationList';
 import websocketService from './services/websocket';
 import { WS_MESSAGE_TYPES, CONNECTION_STATUS } from './utils/constants';
+import { useLanguage } from './context/LanguageContext';
+import { useTranslation } from './hooks/useTranslation';
 
 function App() {
   const [wsStatus, setWsStatus] = useState(CONNECTION_STATUS.DISCONNECTED);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const { language, changeLanguage } = useLanguage();
+  const { t } = useTranslation();
 
   useEffect(() => {
     // Connect to WebSocket
@@ -58,14 +62,37 @@ function App() {
           wsStatus === CONNECTION_STATUS.CONNECTED ? 'status-connected' : 'status-disconnected'
         }`}
       >
-        {wsStatus === CONNECTION_STATUS.CONNECTED ? '● Connected' : '○ Disconnected'}
+        {wsStatus === CONNECTION_STATUS.CONNECTED ? t('app.connected') : t('app.disconnected')}
       </div>
 
       {/* Header */}
       <div className="header">
-        <div className="container">
-          <h1>Global Credit Core</h1>
-          <p>Multi-Country Credit Application System</p>
+        <div className="container" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h1>{t('app.title')}</h1>
+            <p>{t('app.subtitle')}</p>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <label htmlFor="language-select" style={{ color: '#fff', fontSize: '0.9rem' }}>
+              Idioma:
+            </label>
+            <select
+              id="language-select"
+              value={language}
+              onChange={(e) => changeLanguage(e.target.value)}
+              style={{
+                padding: '8px 12px',
+                borderRadius: '4px',
+                border: '1px solid #ddd',
+                fontSize: '0.9rem',
+                cursor: 'pointer',
+                backgroundColor: '#fff'
+              }}
+            >
+              <option value="en">English</option>
+              <option value="es">Español</option>
+            </select>
+          </div>
         </div>
       </div>
 

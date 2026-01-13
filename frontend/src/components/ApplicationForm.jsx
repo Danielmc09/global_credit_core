@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
 import { applicationAPI } from '../services/api';
+import { useTranslation } from '../hooks/useTranslation';
+import { formatValidationErrors, translateError } from '../utils/errorTranslator';
 
 const COUNTRY_CONFIGS = {
   ES: {
@@ -42,6 +44,7 @@ const COUNTRY_CONFIGS = {
 };
 
 function ApplicationForm({ onApplicationCreated }) {
+  const { t } = useTranslation();
   const [formData, setFormData] = useState({
     country: 'ES',
     full_name: '',
@@ -63,7 +66,7 @@ function ApplicationForm({ onApplicationCreated }) {
         }
       })
       .catch(() => {
-        toast.error('Error loading supported countries');
+        toast.error(t('messages.errorLoadingCountries'));
       });
   }, []);
 
@@ -89,7 +92,7 @@ function ApplicationForm({ onApplicationCreated }) {
 
       const response = await applicationAPI.createApplication(submitData);
 
-      toast.success(`Application created successfully! ID: ${response.id.slice(0, 8)}...`);
+      toast.success(`${t('messages.applicationCreated')} ${response.id.slice(0, 8)}...`);
 
       // Reset form
       setFormData({
@@ -111,21 +114,50 @@ function ApplicationForm({ onApplicationCreated }) {
       if (errorData?.detail) {
         // Check if detail is an array (validation errors) or a string (single error)
         if (Array.isArray(errorData.detail)) {
-          // Multiple validation errors
-          const errorMessages = errorData.detail.map((error) => {
-            const field = error.loc?.slice(-1)[0] || 'field';
-            const message = error.msg || 'Validation error';
-            return `${field}: ${message}`;
+          // Multiple validation errors - format and translate them
+          const formattedErrors = formatValidationErrors(errorData.detail, t);
+          
+          // Create a more readable error message
+          const errorMessages = formattedErrors.map((error, index) => {
+            // Combine field and message in a user-friendly way
+            if (error.message.includes(error.field)) {
+              return `${index + 1}. ${error.message}`;
+            }
+            return `${index + 1}. ${error.field}: ${error.message}`;
           });
-          toast.error(`Validation errors:\n${errorMessages.join('\n')}`, {
-            autoClose: 8000,
+
+          // Show formatted error with better styling
+          const fullMessage = `${t('messages.validationErrors')}\n\n${errorMessages.join('\n')}`;
+          
+          toast.error(fullMessage, {
+            autoClose: 12000,
+            style: {
+              whiteSpace: 'pre-line',
+              fontSize: '14px',
+              lineHeight: '1.6',
+              maxWidth: '500px',
+              wordWrap: 'break-word'
+            }
           });
         } else {
-          // Single error message
-          toast.error(errorData.detail);
+          // Single error message - translate it
+          const translatedError = translateError(errorData.detail, t);
+          toast.error(translatedError, {
+            autoClose: 10000,
+            style: {
+              whiteSpace: 'pre-line',
+              fontSize: '14px',
+              lineHeight: '1.5'
+            }
+          });
         }
       } else {
-        toast.error(err.message || 'Error creating application');
+        // Network or other errors
+        const errorMessage = err.message || t('messages.errorCreating');
+        const translatedError = translateError(errorMessage, t);
+        toast.error(translatedError, {
+          autoClose: 5000
+        });
       }
     } finally {
       setLoading(false);
@@ -136,12 +168,12 @@ function ApplicationForm({ onApplicationCreated }) {
 
   return (
     <div className="card">
-      <h2>Create Credit Application</h2>
+      <h2>{t('form.title')}</h2>
 
       <form onSubmit={handleSubmit}>
         <div className="two-column">
           <div className="form-group">
-            <label htmlFor="country">Country *</label>
+            <label htmlFor="country">{t('form.country')} *</label>
             <select
               id="country"
               name="country"
@@ -158,14 +190,14 @@ function ApplicationForm({ onApplicationCreated }) {
           </div>
 
           <div className="form-group">
-            <label htmlFor="full_name">Full Name *</label>
+            <label htmlFor="full_name">{t('form.fullName')} *</label>
             <input
               type="text"
               id="full_name"
               name="full_name"
               value={formData.full_name}
               onChange={handleChange}
-              placeholder="Juan García López"
+              placeholder={t('form.fullNamePlaceholder')}
               required
             />
           </div>
@@ -191,7 +223,7 @@ function ApplicationForm({ onApplicationCreated }) {
 
         <div className="two-column">
           <div className="form-group">
-            <label htmlFor="requested_amount">Requested Amount *</label>
+            <label htmlFor="requested_amount">{t('form.requestedAmount')} *</label>
             <input
               type="number"
               id="requested_amount"
@@ -206,7 +238,7 @@ function ApplicationForm({ onApplicationCreated }) {
           </div>
 
           <div className="form-group">
-            <label htmlFor="monthly_income">Monthly Income *</label>
+            <label htmlFor="monthly_income">{t('form.monthlyIncome')} *</label>
             <input
               type="number"
               id="monthly_income"
@@ -222,7 +254,7 @@ function ApplicationForm({ onApplicationCreated }) {
         </div>
 
         <button type="submit" className="btn btn-primary" disabled={loading}>
-          {loading ? 'Creating...' : 'Create Application'}
+          {loading ? t('form.creating') : t('form.createButton')}
         </button>
       </form>
     </div>

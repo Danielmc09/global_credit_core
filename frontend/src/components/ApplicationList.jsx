@@ -4,8 +4,11 @@ import { applicationAPI } from '../services/api';
 import websocketService from '../services/websocket';
 import ApplicationDetail from './ApplicationDetail';
 import { WS_MESSAGE_TYPES } from '../utils/constants';
+import { useTranslation } from '../hooks/useTranslation';
+import { translateStatus } from '../utils/statusTranslator';
 
 function ApplicationList({ refreshTrigger }) {
+  const { t } = useTranslation();
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -44,7 +47,7 @@ function ApplicationList({ refreshTrigger }) {
         pageSize: data.page_size || prev.pageSize,
       }));
     } catch (err) {
-      setError('Error loading applications');
+      setError(t('list.error'));
       console.error(err);
     } finally {
       setLoading(false);
@@ -80,7 +83,8 @@ function ApplicationList({ refreshTrigger }) {
         const normalizedId = String(id).trim();
 
         // Show notification with color based on status
-        const toastMessage = `Application updated: ${status}`;
+        const translatedStatus = translateStatus(status, t);
+        const toastMessage = `${t('messages.applicationUpdated')} ${translatedStatus}`;
         const toastOptions = {
           autoClose: 3000,
         };
@@ -234,12 +238,12 @@ function ApplicationList({ refreshTrigger }) {
 
   return (
     <div className="card">
-      <h2>Credit Applications</h2>
+      <h2>{t('list.title')}</h2>
 
       {/* Filters */}
       <div className="filters">
         <select name="country" value={filters.country} onChange={handleFilterChange}>
-          <option value="">All Countries</option>
+          <option value="">{t('list.allCountries')}</option>
           <option value="ES">España</option>
           <option value="MX">México</option>
           <option value="BR">Brasil</option>
@@ -249,21 +253,21 @@ function ApplicationList({ refreshTrigger }) {
         </select>
 
         <select name="status" value={filters.status} onChange={handleFilterChange}>
-          <option value="">All Statuses</option>
-          <option value="PENDING">Pending</option>
-          <option value="VALIDATING">Validating</option>
-          <option value="APPROVED">Approved</option>
-          <option value="REJECTED">Rejected</option>
-          <option value="UNDER_REVIEW">Under Review</option>
+          <option value="">{t('list.allStatuses')}</option>
+          <option value="PENDING">{t('list.statuses.pending')}</option>
+          <option value="VALIDATING">{t('list.statuses.validating')}</option>
+          <option value="APPROVED">{t('list.statuses.approved')}</option>
+          <option value="REJECTED">{t('list.statuses.rejected')}</option>
+          <option value="UNDER_REVIEW">{t('list.statuses.underReview')}</option>
         </select>
 
         <button onClick={loadApplications} className="btn btn-primary">
-          Refresh
+          {t('list.refresh')}
         </button>
       </div>
 
       {/* Loading State */}
-      {loading && <div className="loading">Loading applications...</div>}
+      {loading && <div className="loading">{t('list.loading')}</div>}
 
       {/* Error State */}
       {error && <div className="error">{error}</div>}
@@ -273,21 +277,21 @@ function ApplicationList({ refreshTrigger }) {
         <div className="table-container">
           {applications.length === 0 ? (
             <p style={{ textAlign: 'center', padding: '40px', color: '#888' }}>
-              No applications found
+              {t('list.noApplications')}
             </p>
           ) : (
             <table>
               <thead>
                 <tr>
-                  <th>ID</th>
-                  <th>Country</th>
-                  <th>Name</th>
-                  <th>Document</th>
-                  <th>Amount</th>
-                  <th>Status</th>
-                  <th>Risk Score</th>
-                  <th>Created</th>
-                  <th>Actions</th>
+                  <th>{t('list.id')}</th>
+                  <th>{t('list.country')}</th>
+                  <th>{t('list.name')}</th>
+                  <th>{t('list.document')}</th>
+                  <th>{t('list.amount')}</th>
+                  <th>{t('list.status')}</th>
+                  <th>{t('list.riskScore')}</th>
+                  <th>{t('list.created')}</th>
+                  <th>{t('list.actions')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -309,7 +313,7 @@ function ApplicationList({ refreshTrigger }) {
                     <td>{formatCurrency(app.requested_amount)}</td>
                     <td>
                       <span className={getStatusBadgeClass(app.status)}>
-                        {app.status}
+                        {translateStatus(app.status, t)}
                       </span>
                     </td>
                     <td>
@@ -338,9 +342,9 @@ function ApplicationList({ refreshTrigger }) {
                       <button
                         onClick={() => setSelectedApplicationId(app.id)}
                         className="btn-action"
-                        title="View details"
+                        title={t('list.viewDetails')}
                       >
-                        View
+                        {t('list.view')}
                       </button>
                     </td>
                   </tr>
@@ -354,12 +358,12 @@ function ApplicationList({ refreshTrigger }) {
       {!loading && !error && applications.length > 0 && (
         <div className="pagination-container">
           <div className="pagination-info">
-            Showing {startRecord}-{endRecord} of {pagination.total} application(s)
+            {t('list.showing')} {startRecord}-{endRecord} {t('list.of')} {pagination.total} {pagination.total === 1 ? t('list.application') : t('list.applications')}
           </div>
 
           <div className="pagination-controls">
             <div className="page-size-selector">
-              <label htmlFor="pageSize">Records per page:</label>
+              <label htmlFor="pageSize">{t('list.recordsPerPage')}</label>
               <select
                 id="pageSize"
                 value={pagination.pageSize}
@@ -376,38 +380,38 @@ function ApplicationList({ refreshTrigger }) {
                 onClick={() => handlePageChange(1)}
                 disabled={pagination.page === 1}
                 className="btn-pagination"
-                title="First page"
+                title={t('list.first')}
               >
-                First
+                {t('list.first')}
               </button>
               <button
                 onClick={() => handlePageChange(pagination.page - 1)}
                 disabled={pagination.page === 1}
                 className="btn-pagination"
-                title="Previous page"
+                title={t('list.previous')}
               >
-                Previous
+                {t('list.previous')}
               </button>
 
               <span className="page-indicator">
-                Page {pagination.page} of {totalPages}
+                {t('list.page')} {pagination.page} {t('list.of')} {totalPages}
               </span>
 
               <button
                 onClick={() => handlePageChange(pagination.page + 1)}
                 disabled={pagination.page >= totalPages}
                 className="btn-pagination"
-                title="Next page"
+                title={t('list.next')}
               >
-                Next
+                {t('list.next')}
               </button>
               <button
                 onClick={() => handlePageChange(totalPages)}
                 disabled={pagination.page >= totalPages}
                 className="btn-pagination"
-                title="Last page"
+                title={t('list.last')}
               >
-                Last
+                {t('list.last')}
               </button>
             </div>
           </div>
