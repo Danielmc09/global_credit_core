@@ -91,10 +91,14 @@ app = FastAPI(
 )
 
 # Override OpenAPI schema to add security configuration
+# Save the original FastAPI openapi function before replacing it
+_original_openapi = app.openapi
+
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
-    openapi_schema = app.openapi()
+    # Use the original FastAPI openapi function to avoid recursion
+    openapi_schema = _original_openapi()
     openapi_schema["info"]["description"] = """
 Multi-country credit application system with async processing.
 
@@ -115,14 +119,15 @@ This API uses JWT (JSON Web Tokens) for authentication. To use protected endpoin
 
 For more details, see `docs/authentication.md`
     """
-    openapi_schema["components"] = {
-        "securitySchemes": {
-            "BearerAuth": {
-                "type": "http",
-                "scheme": "bearer",
-                "bearerFormat": "JWT",
-                "description": "Enter your JWT token. Format: Bearer <token>"
-            }
+    # Ensure components dict exists
+    if "components" not in openapi_schema:
+        openapi_schema["components"] = {}
+    openapi_schema["components"]["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "Enter your JWT token. Format: Bearer <token>"
         }
     }
     app.openapi_schema = openapi_schema
