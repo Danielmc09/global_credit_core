@@ -109,7 +109,6 @@ class TestWebSocketEndpoint:
             mock_manager.disconnect = MagicMock()
             
             await websocket_endpoint(mock_websocket)
-            
             mock_manager.disconnect.assert_called_once()
 
 
@@ -265,20 +264,16 @@ class TestWebSocketService:
                 currency="EUR"
             )
             application = await service.create_application(app_data)
-            await db.flush()
-            # Refresh to ensure all attributes are loaded before accessing them
+            db.expire(application)
+            await db.commit()
             await db.refresh(application)
             application_id_str = str(application.id)
-            await db.commit()
-            # Keep session open - access application attributes while session is still active
-            # This prevents lazy-load issues when broadcast_application_update accesses attributes
 
             with patch('app.services.websocket_service.get_redis') as mock_get_redis:
                 mock_redis = AsyncMock()
                 mock_redis.publish = AsyncMock()
                 mock_get_redis.return_value = mock_redis
 
-                # Call broadcast while session is still open
                 await broadcast_application_update(application)
 
                 mock_redis.publish.assert_called_once()
@@ -302,13 +297,10 @@ class TestWebSocketService:
                 currency="EUR"
             )
             application = await service.create_application(app_data)
-            await db.flush()
-            # Refresh to ensure all attributes are loaded before accessing them
+            db.expire(application)
+            await db.commit()
             await db.refresh(application)
             application_id_str = str(application.id)
-            await db.commit()
-            # No need to refresh - application object is already valid
-
             with patch('app.services.websocket_service.get_redis') as mock_get_redis:
                 mock_redis = AsyncMock()
                 mock_redis.publish = AsyncMock(side_effect=Exception("Redis error"))
