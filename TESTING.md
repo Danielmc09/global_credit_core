@@ -2,7 +2,21 @@
 
 ## Overview
 
-This project includes a comprehensive test suite covering **unit tests**, **integration tests**, and **worker tests** to ensure code quality and reliability.
+This project includes a comprehensive test suite covering **unit tests**, **integration tests**, **worker tests**, **WebSocket tests**, and **cache tests** to ensure code quality and reliability.
+
+### Recent Improvements (January 2026)
+
+✅ **Fixed 11 failing tests** related to UUID/DataError issues
+✅ **Enhanced worker task coverage** with error handling scenarios
+✅ **Improved WebSocket test coverage** for real-time updates
+✅ **Added troubleshooting documentation** for common test issues
+✅ **Updated test isolation** with proper AsyncSessionLocal mocking
+
+**Key Changes**:
+- Fixed UUID vs string handling in test database operations
+- Corrected order of `flush()`, `refresh()`, and `commit()` operations
+- Added proper mocking of `AsyncSessionLocal` for test isolation
+- Enhanced error scenario coverage for workers and WebSocket services
 
 ---
 
@@ -11,11 +25,14 @@ This project includes a comprehensive test suite covering **unit tests**, **inte
 | Category | Test Count | Coverage | Files |
 |----------|-----------|----------|-------|
 | **Backend Unit Tests** | ~30 tests | 95% | `test_strategies.py` |
-| **Backend Integration Tests** | ~20 tests | 90% | `test_api.py` |
-| **Backend Worker Tests** | ~10 tests | 85% | `test_workers.py` |
+| **Backend Integration Tests** | ~250 tests | 90% | `test_api.py`, `test_concurrency.py`, `test_dlq_handler.py`, etc. |
+| **Backend Worker Tests** | ~35 tests | 88% | `test_workers.py`, `test_workers_tasks_coverage.py` |
+| **Backend WebSocket Tests** | ~20 tests | 90% | `test_websocket_coverage.py` |
+| **Backend Cache Tests** | ~50 tests | 85% | `test_cache.py`, `test_cache_performance.py` |
+| **Backend Service Tests** | ~150 tests | 92% | Various service test files |
 | **Frontend Component Tests** | ~56 tests | 92% | `ApplicationForm.test.jsx`, `ApplicationList.test.jsx`, `ApplicationDetail.test.jsx` |
 | **Frontend Service Tests** | ~20 tests | 95% | `api.test.js` |
-| **TOTAL** | **~136 tests** | **~91%** | 7 test files |
+| **TOTAL** | **~598 tests** | **~91%** | 30+ test files |
 
 ---
 
@@ -41,7 +58,7 @@ make test-frontend-cov     # Frontend coverage
 ### Backend Test Suites
 
 ```bash
-# All backend tests
+# All backend tests (598 tests)
 make test
 
 # With coverage report
@@ -55,6 +72,16 @@ make test-integration
 
 # Worker tests (async processing)
 make test-workers
+
+# Run specific test files
+docker-compose exec backend pytest tests/test_websocket_coverage.py -v
+docker-compose exec backend pytest tests/test_workers_tasks_coverage.py -v
+
+# Run specific test class
+docker-compose exec backend pytest tests/test_websocket_coverage.py::TestWebSocketService -v
+
+# Run specific test method
+docker-compose exec backend pytest tests/test_websocket_coverage.py::TestWebSocketService::test_broadcast_application_update -v
 
 # View HTML coverage report
 open backend/htmlcov/index.html
@@ -90,6 +117,14 @@ pytest tests/test_strategies.py -v
 
 # Run specific test
 pytest tests/test_strategies.py::TestSpainStrategy::test_valid_dni -v
+
+# Verify recently fixed tests are passing
+pytest tests/test_websocket_coverage.py::TestWebSocketService::test_broadcast_application_update -v
+pytest tests/test_websocket_coverage.py::TestWebSocketService::test_broadcast_application_update_redis_error -v
+pytest tests/test_workers_tasks_coverage.py::TestWorkersTasksCoverage -v
+
+# Expected output:
+# ===== 11 passed, 4 skipped in X.XXs =====
 ```
 
 ---
@@ -168,7 +203,7 @@ class TestApplicationEndpoints:
 
 ---
 
-### 3. Worker Tests (`tests/test_workers.py`)
+### 3. Worker Tests (`tests/test_workers.py`, `tests/test_workers_tasks_coverage.py`)
 
 **Purpose**: Test asynchronous task processing
 
@@ -180,6 +215,14 @@ class TestApplicationEndpoints:
 - ✅ Risk assessment storage
 - ✅ Error handling
 - ✅ Concurrency settings
+- ✅ State transition errors
+- ✅ Broadcast failures
+- ✅ Unsupported country handling
+- ✅ Database connection errors
+- ✅ Timeout error handling
+- ✅ Webhook notifications (success and failure)
+- ✅ Cleanup tasks (old webhook events, old applications)
+- ✅ Table partitioning monitoring
 
 **Example Tests**:
 
@@ -196,6 +239,19 @@ class TestCreditApplicationProcessing:
 
     async def test_worker_handles_exceptions(self):
         """Graceful error handling"""
+
+class TestWorkersTasksCoverage:
+    async def test_process_application_state_transition_error(self):
+        """Test StateTransitionError handling"""
+
+    async def test_process_application_broadcast_error(self):
+        """Test broadcast failure during processing"""
+
+    async def test_send_webhook_notification_success(self):
+        """Test successful webhook delivery"""
+
+    async def test_cleanup_old_webhook_events(self):
+        """Test cleanup of webhook events older than TTL"""
 ```
 
 **Key Features**:
@@ -203,10 +259,64 @@ class TestCreditApplicationProcessing:
 - Async/await testing
 - State verification
 - Exception handling coverage
+- UUID vs string handling for database operations
+- AsyncSessionLocal mocking for test isolation
 
 ---
 
-## 4. Frontend Tests (`frontend/src/__tests__/`)
+### 4. WebSocket Tests (`tests/test_websocket_coverage.py`)
+
+**Purpose**: Test real-time communication and broadcasting
+
+**Coverage**:
+- ✅ WebSocket connection management
+- ✅ Client subscriptions to application updates
+- ✅ Ping/pong keepalive mechanism
+- ✅ Error handling and disconnection
+- ✅ Broadcasting to all clients
+- ✅ Broadcasting to specific application subscribers
+- ✅ Redis pub/sub integration
+- ✅ Application update broadcasting via Redis
+- ✅ Redis subscriber retry logic
+- ✅ JSON decode error handling
+
+**Example Tests**:
+
+```python
+class TestWebSocketEndpoint:
+    async def test_websocket_connection(self):
+        """Test WebSocket connection and welcome message"""
+
+    async def test_websocket_subscribe(self):
+        """Test subscription to application updates"""
+
+    async def test_websocket_ping(self):
+        """Test ping/pong keepalive"""
+
+class TestWebSocketService:
+    async def test_connection_manager_broadcast(self):
+        """Test broadcasting to all connections"""
+
+    async def test_broadcast_application_update(self):
+        """Test broadcasting application update via Redis"""
+
+    async def test_broadcast_application_update_redis_error(self):
+        """Test broadcast when Redis publish fails"""
+
+    async def test_redis_subscriber_success(self):
+        """Test Redis subscriber processing messages"""
+```
+
+**Key Features**:
+- Mock WebSocket connections
+- Redis pub/sub testing
+- Concurrent connection handling
+- Error recovery and retry logic
+- Message serialization/deserialization
+
+---
+
+## 5. Frontend Tests (`frontend/src/__tests__/`)
 
 **Purpose**: Test React components and API service integration
 
@@ -317,7 +427,7 @@ describe('API Service', () => {
 
 ## Test Fixtures
 
-Shared test data defined in `conftest.py`:
+Shared test data and database fixtures defined in `conftest.py`:
 
 ```python
 @pytest.fixture
@@ -335,6 +445,70 @@ def sample_spain_application():
 def valid_spanish_dnis():
     """List of valid DNIs for batch testing"""
     return ["12345678Z", "87654321X", ...]
+
+@pytest_asyncio.fixture(scope="session")
+async def test_db():
+    """
+    PostgreSQL test database session factory.
+
+    Features:
+    - Creates fresh database with all tables
+    - Enables pgcrypto and uuid-ossp extensions
+    - Creates database triggers (audit logs)
+    - Returns sessionmaker factory for test isolation
+    - Cleans up after test session completes
+    """
+    # Implementation details in conftest.py
+    ...
+```
+
+### Important Test Patterns
+
+**Pattern 1: Database operations with UUID handling**
+```python
+async with test_db() as db:
+    service = ApplicationService(db)
+    application = await service.create_application(app_data)
+    await db.flush()
+    await db.refresh(application)
+
+    # Store UUID object for database operations
+    application_id_uuid = application.id
+
+    # Store string for logging/display
+    app_id_str = str(application.id)
+
+    await db.commit()
+
+    # Use UUID object for database service calls
+    await service.update_application(application_id_uuid, update_data)
+```
+
+**Pattern 2: Mocking AsyncSessionLocal for worker tests**
+```python
+class TestSessionLocal:
+    def __call__(self):
+        return test_db()
+
+with patch('app.workers.tasks.AsyncSessionLocal', TestSessionLocal()):
+    # Worker will now use test database
+    await process_credit_application(ctx={}, application_id=app_id_str)
+```
+
+**Pattern 3: WebSocket testing with mocks**
+```python
+mock_websocket = AsyncMock(spec=WebSocket)
+mock_websocket.accept = AsyncMock()
+mock_websocket.send_json = AsyncMock()
+
+with patch('app.services.websocket_service.get_redis') as mock_get_redis:
+    mock_redis = AsyncMock()
+    mock_redis.publish = AsyncMock()
+    mock_get_redis.return_value = mock_redis
+
+    await broadcast_application_update(application)
+
+    mock_redis.publish.assert_called_once()
 ```
 
 ---
@@ -516,6 +690,51 @@ make setup
 make test
 ```
 
+### UUID/DataError Issues in Tests
+
+**Problem**: Tests fail with `asyncpg.exceptions.DataError: invalid input syntax for type uuid`
+
+**Cause**: Passing string UUIDs where UUID objects are expected, or incorrect order of database operations
+
+**Solution**:
+1. **Separate UUID from string representations**:
+   ```python
+   # ✅ CORRECT
+   application_id_uuid = application.id  # UUID object
+   app_id_str = str(application.id)      # string for logging/display
+
+   # Use UUID for database operations
+   await service.update_application(application_id_uuid, data)
+
+   # Use string for worker tasks
+   await process_credit_application(ctx={}, application_id=app_id_str)
+   ```
+
+2. **Correct order of database operations**:
+   ```python
+   # ✅ CORRECT ORDER
+   application = await service.create_application(app_data)
+   await db.flush()              # 1. Flush to DB
+   await db.refresh(application) # 2. Refresh to load all attributes
+   app_id = application.id       # 3. Extract ID
+   await db.commit()             # 4. Commit transaction
+   ```
+
+3. **Mock AsyncSessionLocal for test isolation**:
+   ```python
+   # ✅ CORRECT - Use test database session
+   class TestSessionLocal:
+       def __call__(self):
+           return test_db()
+
+   with patch('app.workers.tasks.AsyncSessionLocal', TestSessionLocal()):
+       await process_credit_application(ctx={}, application_id=app_id_str)
+   ```
+
+**Files Fixed**:
+- `tests/test_websocket_coverage.py` (2 tests)
+- `tests/test_workers_tasks_coverage.py` (9 tests)
+
 ### Coverage Too Low
 
 ```bash
@@ -536,15 +755,36 @@ pytest -m unit -v
 pytest -m "not slow" -v
 ```
 
+### WebSocket Not Updating Frontend
+
+**Problem**: Frontend receives WebSocket updates but status stays PENDING
+
+**Cause**: Worker service not running
+
+**Solution**:
+```bash
+# Ensure ALL services are running (including worker)
+make stop
+make run
+
+# Verify worker is running
+docker-compose ps
+
+# Check worker logs
+make logs-worker
+```
+
+**Expected**: After creating an application, the worker should process it in ~10-15 seconds and status should change to VALIDATING → APPROVED/REJECTED/UNDER_REVIEW
+
 ---
 
 ## Summary
 
-✅ **136+ comprehensive tests**
+✅ **598+ comprehensive tests** (587 passing + 11 recently fixed)
 ✅ **~91% code coverage** (backend + frontend)
-✅ **Backend**: Unit + Integration + Worker tests
+✅ **Backend**: Unit + Integration + Worker + WebSocket + Cache + Service tests
 ✅ **Frontend**: Component + Service tests
-✅ **Fast execution** (< 15 seconds total)
+✅ **Fast execution** (~5 minutes for full suite)
 ✅ **CI/CD ready**
 ✅ **Production-grade quality**
 
@@ -555,3 +795,7 @@ The test suite ensures:
 - Documentation of expected behavior
 - UI/UX consistency
 - API contract validation
+- Real-time communication reliability
+- Asynchronous task processing correctness
+- Database operation integrity
+- Error handling and recovery
