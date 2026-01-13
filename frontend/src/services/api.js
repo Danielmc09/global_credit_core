@@ -14,8 +14,6 @@ const DEV_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkZW1vLXVzZXIt
 // Request interceptor for logging and authentication
 api.interceptors.request.use(
   (config) => {
-    console.log(`API Request: ${config.method.toUpperCase()} ${config.url}`);
-
     // Get token from localStorage or use dev token
     const token = localStorage.getItem('token') || DEV_TOKEN;
 

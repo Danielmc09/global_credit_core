@@ -127,18 +127,6 @@ function ApplicationList({ refreshTrigger }) {
               _updated: Date.now() // Force change detection
             };
 
-            // Debug logging
-            console.log('🔄 WebSocket update received:', {
-              id: normalizedId,
-              status: { old: currentApp.status, new: updatedApp.status },
-              risk_score: {
-                old: currentApp.risk_score,
-                new: updatedApp.risk_score,
-                raw: risk_score,
-                type: typeof risk_score
-              }
-            });
-
             // Create new array with updated application
             const updated = [
               ...prev.slice(0, existingAppIndex),
