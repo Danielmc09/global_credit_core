@@ -1,0 +1,50 @@
+---
+# ResourceQuota for the namespace - limits total resource consumption
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: credit-resource-quota
+  namespace: default
+spec:
+  hard:
+    # CPU limits
+    requests.cpu: "10"
+    limits.cpu: "20"
+    # Memory limits
+    requests.memory: 10Gi
+    limits.memory: 20Gi
+    # Pod limits
+    pods: "50"
+    # Persistent volume claims
+    persistentvolumeclaims: "10"
+    # Services
+    services: "10"
+    # Secrets
+    secrets: "20"
+    # ConfigMaps
+    configmaps: "20"
+---
+# LimitRange for default resource requests/limits per pod/container
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: credit-limit-range
+  namespace: default
+spec:
+  limits:
+  # Default limits for containers
+  - default:
+      cpu: "500m"
+      memory: "512Mi"
+    defaultRequest:
+      cpu: "250m"
+      memory: "256Mi"
+    type: Container
+  # Limits for pods
+  - max:
+      cpu: "2"
+      memory: 2Gi
+    min:
+      cpu: "100m"
+      memory: "128Mi"
+    type: Pod

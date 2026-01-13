@@ -1,0 +1,148 @@
+[tool.mypy]
+# MyPy Configuration for Global Credit Core
+# Strict type checking to prevent precision errors and type issues
+
+# Python version
+python_version = "3.11"
+
+# Strict mode - catch more errors
+strict = false  # We'll enable specific strict checks
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # Allow gradual typing
+disallow_incomplete_defs = false
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+# Error output
+show_error_codes = true
+show_column_numbers = true
+pretty = true
+
+# Import checking
+ignore_missing_imports = false
+follow_imports = "normal"
+
+# Per-module options
+[[tool.mypy.overrides]]
+module = [
+    "circuitbreaker.*",
+    "arq.*",
+    "slowapi.*",
+    "prometheus_client.*",
+    "validate_docbr.*",
+]
+ignore_missing_imports = true
+
+# CRITICAL: Strict checking for strategies (no float allowed!)
+[[tool.mypy.overrides]]
+module = [
+    "app.strategies.*",
+]
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+# Services and core modules - moderate strictness
+[[tool.mypy.overrides]]
+module = [
+    "app.services.*",
+    "app.core.*",
+]
+disallow_untyped_calls = true
+check_untyped_defs = true
+no_implicit_optional = true
+
+[tool.ruff]
+# Ruff configuration - Fast Python linter and formatter
+# Replaces: flake8, isort, black, pydocstyle, and many others
+
+# Line length
+line-length = 100
+
+# Target Python version
+target-version = "py311"
+
+# Exclude patterns
+exclude = [
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "migrations",
+    "htmlcov",
+    "*.egg-info",
+]
+
+[tool.ruff.lint]
+# Enable rule sets
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "ARG", # flake8-unused-arguments
+    "SIM", # flake8-simplify
+    "PIE", # flake8-pie
+    "PT",  # flake8-pytest-style
+    "RET", # flake8-return
+    "RUF", # Ruff-specific rules
+    "D",   # pydocstyle (docstring conventions)
+]
+
+# Ignore specific rules
+ignore = [
+    "E501",  # Line too long (handled by formatter)
+    "D100",  # Missing docstring in public module
+    "D104",  # Missing docstring in public package
+    "D107",  # Missing docstring in __init__
+]
+
+# Allow autofix for all enabled rules
+fixable = ["ALL"]
+unfixable = []
+
+# Per-file ignores
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # Allow unused imports in __init__.py
+"tests/*" = ["D"]  # Disable docstring checks in tests
+
+[tool.ruff.lint.isort]
+# Import sorting configuration
+known-first-party = ["app"]
+
+[tool.ruff.lint.pydocstyle]
+# Docstring style: Google convention
+convention = "google"
+
+[tool.ruff.format]
+# Formatting options (replaces black)
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+# Pytest configuration (already in pytest.ini, but keeping for consistency)
+testpaths = ["tests"]

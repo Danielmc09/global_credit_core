@@ -1,0 +1,55 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: credit-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    # WebSocket support
+    nginx.ingress.kubernetes.io/websocket-services: "credit-api"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: credit.example.com
+    http:
+      paths:
+      # API endpoints
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: credit-api
+            port:
+              number: 8000
+      # Health check
+      - path: /health
+        pathType: Prefix
+        backend:
+          service:
+            name: credit-api
+            port:
+              number: 8000
+      # WebSocket endpoint
+      - path: /ws
+        pathType: Prefix
+        backend:
+          service:
+            name: credit-api
+            port:
+              number: 8000
+      # Frontend (default)
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: credit-frontend
+            port:
+              number: 80
+  # TLS configuration (optional)
+  # tls:
+  # - hosts:
+  #   - credit.example.com
+  #   secretName: credit-tls-secret

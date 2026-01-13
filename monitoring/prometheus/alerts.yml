@@ -1,0 +1,75 @@
+# Prometheus Alerting Rules for Global Credit Core
+# These rules define conditions that trigger alerts when metrics exceed thresholds
+
+groups:
+  - name: worker_alerts
+    interval: 30s
+    rules:
+      # Alert when worker task failure rate exceeds 5%
+      - alert: HighWorkerTaskFailureRate
+        expr: |
+          (
+            rate(worker_tasks_total{task_name="process_credit_application",status="failure"}[5m])
+            /
+            rate(worker_tasks_total{task_name="process_credit_application"}[5m])
+          ) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: worker
+        annotations:
+          summary: "High worker task failure rate detected"
+          description: |
+            Worker task failure rate is {{ $value | humanizePercentage }}% for process_credit_application,
+            which exceeds the 5% threshold.
+            This may indicate issues with external providers, database connectivity, or business logic errors.
+      
+      # Alert when worker task failure rate exceeds 10% (critical)
+      - alert: CriticalWorkerTaskFailureRate
+        expr: |
+          (
+            rate(worker_tasks_total{task_name="process_credit_application",status="failure"}[5m])
+            /
+            rate(worker_tasks_total{task_name="process_credit_application"}[5m])
+          ) * 100 > 10
+        for: 2m
+        labels:
+          severity: critical
+          component: worker
+        annotations:
+          summary: "Critical worker task failure rate detected"
+          description: |
+            Worker task failure rate is {{ $value | humanizePercentage }}% for process_credit_application,
+            which exceeds the 10% critical threshold.
+            Immediate investigation required.
+      
+      # Alert when no worker tasks are being processed (worker may be down)
+      - alert: NoWorkerTasksProcessing
+        expr: |
+          rate(worker_tasks_total{task_name="process_credit_application"}[5m]) == 0
+        for: 10m
+        labels:
+          severity: warning
+          component: worker
+        annotations:
+          summary: "No worker tasks being processed"
+          description: |
+            No worker tasks have been processed in the last 10 minutes.
+            This may indicate that workers are down or the queue is empty.
+      
+      # Alert when worker task duration is unusually high
+      - alert: HighWorkerTaskDuration
+        expr: |
+          histogram_quantile(0.95, 
+            rate(worker_task_duration_seconds_bucket{task_name="process_credit_application"}[5m])
+          ) > 300
+        for: 5m
+        labels:
+          severity: warning
+          component: worker
+        annotations:
+          summary: "High worker task duration detected"
+          description: |
+            The 95th percentile of worker task duration is {{ $value }}s,
+            which exceeds the 5 minute (300s) threshold.
+            This may indicate performance degradation.

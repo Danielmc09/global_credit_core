@@ -1,0 +1,62 @@
+# FastAPI y servidor
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+websockets==12.0
+
+# Base de datos
+asyncpg==0.29.0
+sqlalchemy[asyncio]==2.0.25
+alembic==1.13.1
+
+# Redis y workers
+redis==5.0.1
+arq==0.25.0
+
+# Seguridad
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+pydantic[email]==2.5.3
+
+# Utilidades
+python-dotenv==1.0.0
+pydantic-settings==2.1.0
+
+# Validaciones por país
+validate-docbr==1.10.0  # Para CPF de Brasil
+
+# Logging y monitoreo
+python-json-logger==2.0.7
+prometheus-client==0.19.0  # Prometheus metrics
+
+# Distributed Tracing (OpenTelemetry)
+opentelemetry-api==1.22.0
+opentelemetry-sdk==1.22.0
+opentelemetry-instrumentation-fastapi==0.43b0
+opentelemetry-instrumentation-sqlalchemy==0.43b0
+opentelemetry-instrumentation-redis==0.43b0
+opentelemetry-exporter-otlp-proto-http==1.22.0
+opentelemetry-semantic-conventions==0.43b0
+
+# Resiliencia
+circuitbreaker==1.4.0  # Circuit breaker pattern
+
+# Rate limiting
+slowapi==0.1.9
+
+# Development & Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+faker==20.1.0
+httpx==0.25.2
+
+# Type checking and code quality
+mypy==1.8.0
+pre-commit==3.6.0
+ruff==0.1.15  # Fast linter and formatter (replaces black, isort, flake8, pydocstyle)
+bandit==1.7.6  # Security scanner (kept separate as Ruff doesn't replace it)
+
+# Load Testing
+aiohttp==3.9.1
+aiosqlite==0.19.0

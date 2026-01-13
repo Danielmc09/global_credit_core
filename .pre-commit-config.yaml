@@ -1,0 +1,70 @@
+# Pre-commit hooks configuration
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^(.*\.md|.*\.sql)$
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # Ruff: Fast Python linter and formatter (replaces black, isort, flake8, pydocstyle, etc.)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.15
+    hooks:
+      # Ruff linting (replaces flake8, pydocstyle, etc.)
+      - id: ruff
+        args: ['--fix', '--exit-non-zero-on-fix']
+        exclude: ^(migrations/|htmlcov/)
+      # Ruff formatting (replaces black)
+      - id: ruff-format
+        exclude: ^(migrations/|htmlcov/)
+
+  # Type checking with mypy
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.8.0
+    hooks:
+      - id: mypy
+        additional_dependencies: [
+          'types-redis',
+          'types-python-dateutil',
+          'pydantic',
+          'sqlalchemy',
+        ]
+        args: [
+          '--config-file=backend/pyproject.toml',
+          '--ignore-missing-imports',
+        ]
+        files: ^backend/app/
+        exclude: ^(backend/migrations/|backend/htmlcov/)
+
+  # CRITICAL: Custom hook to prevent float usage in strategies
+  - repo: local
+    hooks:
+      - id: no-float-in-strategies
+        name: Prevent float usage in strategies
+        entry: bash -c 'grep -r "float" backend/app/strategies/*.py | grep -v "from decimal import" | grep -v "#" && exit 1 || exit 0'
+        language: system
+        pass_filenames: false
+        description: 'Prevents use of float type in strategy files (use Decimal instead)'
+        stages: [commit]
+
+  # Security checks
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.6
+    hooks:
+      - id: bandit
+        args: ['-r', 'backend/app', '-f', 'json', '-o', 'bandit-report.json']
+        exclude: ^(backend/migrations/|backend/htmlcov/|backend/tests/)
+
+  # Note: Ruff handles docstring checks (pydocstyle) via the 'D' rule set

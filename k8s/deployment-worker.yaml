@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: credit-worker
+  labels:
+    app: credit-worker
+    component: worker
+spec:
+  # Multiple workers for concurrent processing (Requirement 3.9)
+  replicas: 5
+  selector:
+    matchLabels:
+      app: credit-worker
+  template:
+    metadata:
+      labels:
+        app: credit-worker
+        component: worker
+    spec:
+      containers:
+      - name: worker
+        image: credit-api:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+        command: ["arq", "app.workers.main.WorkerSettings"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: credit-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: credit-config
+              key: redis-url
+        - name: ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: credit-secrets
+              key: encryption-key
+        - name: ENVIRONMENT
+          value: "production"
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      restartPolicy: Always

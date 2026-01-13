@@ -1,0 +1,39 @@
+---
+# PodDisruptionBudget for credit-api - ensures minimum availability during disruptions
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: credit-api-pdb
+  labels:
+    app: credit-api
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: credit-api
+---
+# PodDisruptionBudget for credit-frontend - ensures minimum availability during disruptions
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: credit-frontend-pdb
+  labels:
+    app: credit-frontend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: credit-frontend
+---
+# PodDisruptionBudget for credit-worker - ensures minimum availability during disruptions
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: credit-worker-pdb
+  labels:
+    app: credit-worker
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: credit-worker

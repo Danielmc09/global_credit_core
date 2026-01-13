@@ -1,0 +1,39 @@
+---
+# ServiceMonitor for credit-api - enables Prometheus to scrape metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: credit-api-monitor
+  labels:
+    app: credit-api
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: credit-api
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    scheme: http
+    # Optional: relabeling for better metric organization
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: namespace
+---
+# Note: ServiceMonitor requires Prometheus Operator to be installed
+# If Prometheus Operator is not available, use Prometheus native ServiceMonitor
+# or configure scraping via Prometheus ConfigMap directly
+#
+# To verify ServiceMonitor is working:
+# kubectl get servicemonitor
+# kubectl describe servicemonitor credit-api-monitor
+#
+# Note: Workers typically don't expose HTTP metrics endpoints.
+# If worker metrics are needed, consider:
+# 1. Exposing metrics via a sidecar container
+# 2. Using push-based metrics (e.g., Prometheus Pushgateway)
+# 3. Creating a Service for workers if they expose metrics on a port

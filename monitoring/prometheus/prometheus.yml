@@ -1,0 +1,33 @@
+# Prometheus Configuration for Global Credit Core
+
+global:
+  scrape_interval: 15s  # Scrape metrics every 15 seconds
+  evaluation_interval: 15s  # Evaluate rules every 15 seconds
+  external_labels:
+    monitor: 'global-credit-monitor'
+    environment: 'development'
+
+# Alerting rules configuration
+rule_files:
+  - 'alerts.yml'
+
+# Scrape configurations
+scrape_configs:
+  # Backend API metrics
+  - job_name: 'credit-backend-api'
+    static_configs:
+      - targets: ['backend:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Worker metrics
+  - job_name: 'credit-worker'
+    static_configs:
+      - targets: ['worker:8001']
+    scrape_interval: 10s
