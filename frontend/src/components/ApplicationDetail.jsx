@@ -1,11 +1,15 @@
 import { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
 import { applicationAPI } from '../services/api';
+import { useTranslation } from '../hooks/useTranslation';
+import { translateError } from '../utils/errorTranslator';
+import { translateStatus } from '../utils/statusTranslator';
 
 // Final states that cannot be changed
 const FINAL_STATES = ['APPROVED', 'REJECTED', 'CANCELLED', 'COMPLETED'];
 
 function ApplicationDetail({ applicationId, onClose, onUpdate }) {
+  const { t, language } = useTranslation();
   const [application, setApplication] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -33,8 +37,8 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
       setAuditLogs(auditData.audit_logs || auditData);
       setNewStatus(appData.status);
     } catch (err) {
-      setError('Error loading application details');
-      toast.error('Error loading application details');
+      setError(t('detail.errorLoadingDetails'));
+      toast.error(t('messages.errorLoadingDetails'));
     } finally {
       setLoading(false);
     }
@@ -43,12 +47,12 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
   const handleUpdateStatusClick = () => {
     // Check if in final state
     if (FINAL_STATES.includes(application.status)) {
-      toast.error('Cannot change status. Application is in a final state.');
+      toast.error(t('messages.cannotChangeFinal'));
       return;
     }
 
     if (newStatus === application.status) {
-      toast.warning('Status is the same, no update needed');
+      toast.warning(t('messages.statusSame'));
       return;
     }
 
@@ -74,13 +78,20 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
       }
 
       // Show success message
-      toast.success('Status updated successfully!');
+      toast.success(t('messages.statusUpdated'));
       
       // Close modal after successful update
       onClose();
     } catch (err) {
       const errorMsg = err.response?.data?.detail || err.message;
-      toast.error('Error updating status: ' + errorMsg);
+      const translatedError = translateError(errorMsg, t);
+      toast.error(`${t('messages.errorUpdatingStatus')} ${translatedError}`, {
+        autoClose: 8000,
+        style: {
+          fontSize: '14px',
+          lineHeight: '1.5'
+        }
+      });
     } finally {
       setUpdating(false);
     }
@@ -91,7 +102,8 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
   };
 
   const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-US', {
+    const locale = language === 'es' ? 'es-ES' : 'en-US';
+    return new Intl.NumberFormat(locale, {
       style: 'currency',
       currency: 'USD',
       minimumFractionDigits: 2,
@@ -103,7 +115,8 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
     try {
       const date = new Date(dateString);
       if (isNaN(date.getTime())) return 'Invalid Date';
-      return date.toLocaleString();
+      const locale = language === 'es' ? 'es-ES' : 'en-US';
+      return date.toLocaleString(locale);
     } catch (e) {
       return 'Invalid Date';
     }
@@ -124,7 +137,7 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
     return (
       <div className="modal-overlay" onClick={onClose}>
         <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-          <div className="loading">Loading application details...</div>
+          <div className="loading">{t('detail.loading')}</div>
         </div>
       </div>
     );
@@ -134,9 +147,9 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
     return (
       <div className="modal-overlay" onClick={onClose}>
         <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-          <div className="error">{error || 'Application not found'}</div>
+          <div className="error">{error || t('detail.notFound')}</div>
           <button onClick={onClose} className="btn btn-primary">
-            Close
+            {t('detail.close')}
           </button>
         </div>
       </div>
@@ -147,8 +160,8 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content large" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>Application Details</h2>
-          <button className="close-btn" onClick={onClose} aria-label="Close">
+          <h2>{t('detail.title')}</h2>
+          <button className="close-btn" onClick={onClose} aria-label={t('detail.close')}>
             ×
           </button>
         </div>
@@ -156,46 +169,46 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
         <div className="modal-body">
           {/* Basic Information */}
           <section className="detail-section">
-            <h3>Basic Information</h3>
+            <h3>{t('detail.basicInfo')}</h3>
             <div className="detail-grid">
               <div className="detail-item">
-                <label>ID:</label>
+                <label>{t('detail.labels.id')}</label>
                 <span style={{ fontFamily: 'monospace', fontSize: '0.9rem' }}>
                   {application.id}
                 </span>
               </div>
               <div className="detail-item">
-                <label>Country:</label>
+                <label>{t('detail.labels.country')}</label>
                 <span>
                   <strong>{application.country}</strong>
                 </span>
               </div>
               <div className="detail-item">
-                <label>Full Name:</label>
+                <label>{t('detail.labels.fullName')}</label>
                 <span>{application.full_name}</span>
               </div>
               <div className="detail-item">
-                <label>Identity Document:</label>
+                <label>{t('detail.labels.identityDocument')}</label>
                 <span style={{ fontFamily: 'monospace' }}>
                   {application.identity_document}
                 </span>
               </div>
               <div className="detail-item">
-                <label>Requested Amount:</label>
+                <label>{t('detail.labels.requestedAmount')}</label>
                 <span>{formatCurrency(application.requested_amount)}</span>
               </div>
               <div className="detail-item">
-                <label>Monthly Income:</label>
+                <label>{t('detail.labels.monthlyIncome')}</label>
                 <span>{formatCurrency(application.monthly_income)}</span>
               </div>
               <div className="detail-item">
-                <label>Status:</label>
+                <label>{t('detail.labels.status')}</label>
                 <span className={getStatusBadgeClass(application.status)}>
-                  {application.status}
+                  {translateStatus(application.status, t)}
                 </span>
               </div>
               <div className="detail-item">
-                <label>Risk Score:</label>
+                <label>{t('detail.labels.riskScore')}</label>
                 <span>
                   {application.risk_score ? (
                     <span
@@ -217,7 +230,7 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
                 </span>
               </div>
               <div className="detail-item">
-                <label>Risk Condition:</label>
+                <label>{t('detail.labels.riskCondition')}</label>
                 <span>
                   {application.country_specific_data?.risk_level ? (
                     <span
@@ -242,11 +255,11 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
                 </span>
               </div>
               <div className="detail-item">
-                <label>Created:</label>
+                <label>{t('detail.labels.created')}</label>
                 <span>{formatDate(application.created_at)}</span>
               </div>
               <div className="detail-item">
-                <label>Updated:</label>
+                <label>{t('detail.labels.updated')}</label>
                 <span>{formatDate(application.updated_at)}</span>
               </div>
             </div>
@@ -256,29 +269,29 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
           {application.banking_data &&
             Object.keys(application.banking_data).length > 0 && (
               <section className="detail-section">
-                <h3>Banking Information</h3>
+                <h3>{t('detail.bankingInfo')}</h3>
                 <div className="detail-grid">
                   {application.banking_data.provider_name && (
                     <div className="detail-item">
-                      <label>Provider:</label>
+                      <label>{t('detail.labels.provider')}</label>
                       <span>{application.banking_data.provider_name}</span>
                     </div>
                   )}
                   {application.banking_data.credit_score && (
                     <div className="detail-item">
-                      <label>Credit Score:</label>
+                      <label>{t('detail.labels.creditScore')}</label>
                       <span>{application.banking_data.credit_score}</span>
                     </div>
                   )}
                   {application.banking_data.total_debt && (
                     <div className="detail-item">
-                      <label>Total Debt:</label>
+                      <label>{t('detail.labels.totalDebt')}</label>
                       <span>{formatCurrency(application.banking_data.total_debt)}</span>
                     </div>
                   )}
                   {application.banking_data.monthly_obligations && (
                     <div className="detail-item">
-                      <label>Monthly Obligations:</label>
+                      <label>{t('detail.labels.monthlyObligations')}</label>
                       <span>
                         {formatCurrency(application.banking_data.monthly_obligations)}
                       </span>
@@ -286,7 +299,7 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
                   )}
                   {application.banking_data.has_defaults !== undefined && (
                     <div className="detail-item">
-                      <label>Has Defaults:</label>
+                      <label>{t('detail.labels.hasDefaults')}</label>
                       <span
                         style={{
                           color: application.banking_data.has_defaults
@@ -295,7 +308,7 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
                           fontWeight: 600,
                         }}
                       >
-                        {application.banking_data.has_defaults ? 'YES' : 'NO'}
+                        {application.banking_data.has_defaults ? t('detail.yes') : t('detail.no')}
                       </span>
                     </div>
                   )}
@@ -307,7 +320,7 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
           {application.validation_errors &&
             application.validation_errors.length > 0 && (
               <section className="detail-section">
-                <h3>Assessment Notes</h3>
+                <h3>{t('detail.assessmentNotes')}</h3>
                 <ul>
                   {application.validation_errors.map((error, index) => (
                     <li key={index}>
@@ -320,10 +333,10 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
 
           {/* Update Status */}
           <section className="detail-section">
-            <h3>Update Status</h3>
+            <h3>{t('detail.updateStatus')}</h3>
             {FINAL_STATES.includes(application.status) ? (
               <div style={{ padding: '16px 20px', background: '#fafafa', borderRadius: '8px', color: '#666', border: '1px solid #e5e5e5', fontSize: '0.9rem' }}>
-                <strong>Status cannot be changed.</strong> Application is in a final state: <strong>{application.status}</strong>
+                <strong>{t('detail.statusCannotChange')}</strong> {t('detail.statusCannotChangeFinal')} <strong>{translateStatus(application.status, t)}</strong>
               </div>
             ) : (
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
@@ -333,20 +346,20 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
                   className="form-group select"
                   style={{ flex: 1, padding: '12px 16px', fontSize: '0.9rem', border: '1px solid #d1d1d1', borderRadius: '8px' }}
                 >
-                  <option value="PENDING">PENDING</option>
-                  <option value="VALIDATING">VALIDATING</option>
-                  <option value="APPROVED">APPROVED</option>
-                  <option value="REJECTED">REJECTED</option>
-                  <option value="UNDER_REVIEW">UNDER_REVIEW</option>
-                  <option value="COMPLETED">COMPLETED</option>
-                  <option value="CANCELLED">CANCELLED</option>
+                  <option value="PENDING">{translateStatus('PENDING', t)}</option>
+                  <option value="VALIDATING">{translateStatus('VALIDATING', t)}</option>
+                  <option value="APPROVED">{translateStatus('APPROVED', t)}</option>
+                  <option value="REJECTED">{translateStatus('REJECTED', t)}</option>
+                  <option value="UNDER_REVIEW">{translateStatus('UNDER_REVIEW', t)}</option>
+                  <option value="COMPLETED">{translateStatus('COMPLETED', t)}</option>
+                  <option value="CANCELLED">{translateStatus('CANCELLED', t)}</option>
                 </select>
                 <button
                   onClick={handleUpdateStatusClick}
                   className="btn btn-primary"
                   disabled={updating || newStatus === application.status}
                 >
-                  {updating ? 'Updating...' : 'Update Status'}
+                  {updating ? t('detail.updating') : t('detail.updateButton')}
                 </button>
               </div>
             )}
@@ -355,7 +368,7 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
           {/* Audit Logs - Shows the business flow (status changes) */}
           {auditLogs.length > 0 && (
             <section className="detail-section">
-              <h3>Application Flow (Status Changes)</h3>
+              <h3>{t('detail.flow')}</h3>
               <div className="audit-logs">
                 {auditLogs.map((log) => (
                   <div key={log.id} className="audit-log-item">
@@ -367,11 +380,11 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
                     </div>
                     <div className="audit-log-change">
                       <span className={getStatusBadgeClass(log.old_status)}>
-                        {log.old_status || 'INITIAL'}
+                        {log.old_status ? translateStatus(log.old_status, t) : t('detail.initial')}
                       </span>
                       <span style={{ margin: '0 12px', color: '#999' }}>→</span>
                       <span className={getStatusBadgeClass(log.new_status)}>
-                        {log.new_status}
+                        {translateStatus(log.new_status, t)}
                       </span>
                     </div>
                     {log.change_reason && (
@@ -386,7 +399,7 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
 
         <div className="modal-footer">
           <button onClick={onClose} className="btn btn-primary">
-            Close
+            {t('detail.close')}
           </button>
         </div>
       </div>
@@ -395,17 +408,17 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
       {showConfirmDialog && (
         <div className="modal-overlay" onClick={handleCancelUpdate}>
           <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <h3>Confirm Status Change</h3>
+            <h3>{t('detail.confirmTitle')}</h3>
             <p>
-              Are you sure you want to change the status from{' '}
-              <strong>{application.status}</strong> to <strong>{newStatus}</strong>?
+              {t('detail.confirmMessage')}{' '}
+              <strong>{translateStatus(application.status, t)}</strong> {t('detail.confirmTo')} <strong>{translateStatus(newStatus, t)}</strong>?
             </p>
             <div className="confirm-dialog-actions">
               <button onClick={handleCancelUpdate} className="btn btn-secondary">
-                Cancel
+                {t('detail.cancel')}
               </button>
               <button onClick={handleConfirmUpdate} className="btn btn-primary">
-                Confirm
+                {t('detail.confirm')}
               </button>
             </div>
           </div>
