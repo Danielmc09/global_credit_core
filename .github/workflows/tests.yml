@@ -98,4 +98,4 @@ jobs:
       
       - name: Run frontend tests
         working-directory: ./frontend
-        run: npm test -- --coverage --run
+        run: npm run test:coverage
