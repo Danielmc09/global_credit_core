@@ -118,12 +118,10 @@ async def process_credit_application(ctx, application_id: str, trace_context: di
     """
     start_time = time.time()
 
-    # Extract trace context if provided
     tracer = get_tracer(__name__)
     if trace_context:
         otel_context_obj = extract_trace_context(trace_context)
         if otel_context_obj:
-            # Create span as child of propagated context
             with otel_context.attach(otel_context_obj):
                 with tracer.start_as_current_span("process_credit_application") as span:
                     span.set_attribute("application.id", application_id)
@@ -131,7 +129,6 @@ async def process_credit_application(ctx, application_id: str, trace_context: di
                         ctx, application_id, start_time, tracer, span
                     )
     
-    # No trace context, create new trace
     with tracer.start_as_current_span("process_credit_application") as span:
         span.set_attribute("application.id", application_id)
         return await _process_credit_application_impl(
@@ -213,10 +210,14 @@ async def _process_credit_application_impl(
                                 ErrorMessages.APPLICATION_NOT_FOUND.format(application_id=application_id)
                             )
 
+                        decrypted_identity_document = None
+                        decrypted_full_name = None
                         if application.identity_document:
-                            application.identity_document = await decrypt_value(db, application.identity_document)
+                            decrypted_identity_document = await decrypt_value(db, application.identity_document)
                         if application.full_name:
-                            application.full_name = await decrypt_value(db, application.full_name)
+                            decrypted_full_name = await decrypt_value(db, application.full_name)
+                        
+                        db.expire(application, ['full_name', 'identity_document'])
 
                         logger.debug("Validating application...")
                         await asyncio.sleep(Timeout.VALIDATION_STAGE_DELAY)
@@ -229,20 +230,58 @@ async def _process_credit_application_impl(
                             raise StateTransitionError(str(e)) from e
                         application.status = new_status
 
-                        await db.refresh(application)
+                    result = await db.execute(
+                        select(Application).where(Application.id == uuid_obj)
+                    )
+                    application = result.scalar_one_or_none()
+                    
+                    if not application:
+                        raise ApplicationNotFoundError(
+                            ErrorMessages.APPLICATION_NOT_FOUND.format(application_id=application_id)
+                        )
+                    
+                    status_value = application.status.value if hasattr(application.status, 'value') else str(application.status)
+                    logger.info(
+                        "Status changed to VALIDATING, broadcasting update",
+                        extra={
+                            'application_id': application_id,
+                            'status': status_value,
+                            'status_type': type(application.status).__name__
+                        }
+                    )
+                    
+                    try:
+                        await broadcast_application_update(application)
+                        logger.debug(
+                            "Broadcasted VALIDATING status",
+                            extra={'application_id': application_id, 'status': status_value}
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to broadcast VALIDATING status",
+                            extra={'application_id': application_id, 'error': str(e)},
+                            exc_info=True
+                        )
 
-                        try:
-                            await broadcast_application_update(application)
-                            logger.debug(
-                                "Broadcasted VALIDATING status",
-                                extra={'application_id': application_id}
+                    async with safe_transaction(db):
+                        result = await db.execute(
+                            select(Application).where(Application.id == uuid_obj)
+                        )
+                        application = result.scalar_one_or_none()
+                        
+                        if not application:
+                            raise ApplicationNotFoundError(
+                                ErrorMessages.APPLICATION_NOT_FOUND.format(application_id=application_id)
                             )
-                        except Exception as e:
-                            logger.warning(
-                                "Failed to broadcast VALIDATING status",
-                                extra={'application_id': application_id, 'error': str(e)},
-                                exc_info=True
-                            )
+                        
+                        decrypted_identity_document = None
+                        decrypted_full_name = None
+                        if application.identity_document:
+                            decrypted_identity_document = await decrypt_value(db, application.identity_document)
+                        if application.full_name:
+                            decrypted_full_name = await decrypt_value(db, application.full_name)
+                        
+                        db.expire(application, ['full_name', 'identity_document'])
 
                         try:
                             strategy = get_country_strategy(application.country)
@@ -263,8 +302,8 @@ async def _process_credit_application_impl(
                             
                             try:
                                 banking_data = await strategy.get_banking_data(
-                                    application.identity_document,
-                                    application.full_name
+                                    decrypted_identity_document,
+                                    decrypted_full_name
                                 )
                                 provider_span.set_attribute("provider.success", True)
                             except (TimeoutError, asyncio.TimeoutError) as e:
@@ -334,8 +373,6 @@ async def _process_credit_application_impl(
 
                         application.validation_errors = risk_assessment.reasons
 
-                        await db.refresh(application)
-
                     logger.info(
                         "Application processing completed",
                         extra={
@@ -345,9 +382,9 @@ async def _process_credit_application_impl(
                         }
                     )
 
+                    await db.refresh(application)
                     try:
                         await broadcast_application_update(application)
-                        # Extract status value safely for logging
                         status_value = application.status.value if hasattr(application.status, 'value') else str(application.status)
                         logger.debug(
                             "Broadcasted final status",

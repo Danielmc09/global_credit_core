@@ -44,10 +44,7 @@ class ConnectionManager:
     """
 
     def __init__(self):
-        # Active connections: Dict[connection_id, WebSocket]
         self.active_connections: dict[str, WebSocket] = {}
-
-        # Subscriptions: Dict[application_id, Set[connection_id]]
         self.subscriptions: dict[str, set[str]] = {}
 
     async def connect(self, websocket: WebSocket, connection_id: str):
@@ -77,7 +74,6 @@ class ConnectionManager:
         if connection_id in self.active_connections:
             del self.active_connections[connection_id]
 
-            # Remove from all subscriptions
             for app_id in list(self.subscriptions.keys()):
                 if connection_id in self.subscriptions[app_id]:
                     self.subscriptions[app_id].remove(connection_id)
@@ -174,7 +170,6 @@ class ConnectionManager:
                     self.disconnect(connection_id)
 
 
-# Global connection manager instance
 manager = ConnectionManager()
 
 
@@ -190,18 +185,26 @@ async def broadcast_application_update(application: Application):
     Args:
         application: Updated application
     """
-    # Extract values to Python native types while session may still be active
-    # This prevents issues with PostgreSQL ENUMs and other types when session is closed
     application_id = str(application.id)
-    # Convert Enum to string value to avoid issues when session is closed
     status_value = application.status.value if hasattr(application.status, 'value') else str(application.status)
     risk_score_value = str(application.risk_score) if application.risk_score is not None else None
-    # Ensure updated_at is a datetime object before formatting
     updated_at_value = application.updated_at
     if updated_at_value:
         updated_at_str = format_datetime(updated_at_value, "%Y-%m-%dT%H:%M:%S")
     else:
         updated_at_str = None
+    
+    raw_status = application.status
+    logger.debug(
+        "Preparing broadcast message",
+        extra={
+            'application_id': application_id,
+            'raw_status': str(raw_status),
+            'raw_status_type': type(raw_status).__name__,
+            'status_value': status_value,
+            'status_value_type': type(status_value).__name__
+        }
+    )
     
     message = {
         "type": WebSocketMessageTypes.APPLICATION_UPDATE,
@@ -213,16 +216,27 @@ async def broadcast_application_update(application: Application):
         },
         "broadcast": True
     }
+    
+    logger.debug(
+        "Broadcast message prepared",
+        extra={
+            'application_id': application_id,
+            'message': message,
+            'message_data_status': message['data']['status']
+        }
+    )
 
-    # Publish to Redis channel for cross-process communication
     try:
         redis = await get_redis()
         await redis.publish('websocket:broadcast', json.dumps(message))
-        logger.debug(
+        logger.info(
             "Application update published to Redis",
             extra={
                 'application_id': application_id,
-                'status': status_value
+                'status': status_value,
+                'risk_score': risk_score_value,
+                'updated_at': updated_at_str,
+                'message_type': message['type']
             }
         )
     except Exception as e:
@@ -230,6 +244,7 @@ async def broadcast_application_update(application: Application):
             "Failed to publish to Redis",
             extra={
                 'application_id': application_id,
+                'status': status_value,
                 'error': str(e)
             },
             exc_info=True
@@ -260,14 +275,12 @@ async def redis_subscriber():
 
             logger.debug("Successfully subscribed to Redis channel: websocket:broadcast")
             
-            # Reset retry count on successful connection
             retry_count = 0
             backoff_seconds = WebSocket.INITIAL_BACKOFF_SECONDS
 
             async for message in pubsub.listen():
                 if message['type'] == 'message':
                     try:
-                        # Decode and parse the message
                         data = json.loads(message['data'])
 
                         logger.debug(
@@ -279,7 +292,6 @@ async def redis_subscriber():
                             }
                         )
 
-                        # Broadcast to all WebSocket connections
                         if data.get('broadcast'):
                             await manager.broadcast(data)
                             logger.debug(
@@ -290,7 +302,6 @@ async def redis_subscriber():
                                 }
                             )
                         else:
-                            # Message targeted to specific application subscribers
                             application_id = data.get('data', {}).get('id')
                             if application_id:
                                 await manager.broadcast_to_application(application_id, data)
@@ -331,7 +342,6 @@ async def redis_subscriber():
                 )
                 break
             
-            # Exponential backoff with jitter
             await asyncio.sleep(backoff_seconds)
             logger.debug(
                 "Attempting to restart Redis subscriber",
@@ -341,5 +351,4 @@ async def redis_subscriber():
                 }
             )
             
-            # Exponential backoff: double the wait time, capped at MAX_BACKOFF_SECONDS
             backoff_seconds = min(backoff_seconds * 2, WebSocket.MAX_BACKOFF_SECONDS)
