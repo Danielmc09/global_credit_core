@@ -31,6 +31,8 @@ from ....schemas.application import (
     AuditLogListResponse,
     AuditLogResponse,
     ErrorResponse,
+    PendingJobListResponse,
+    PendingJobResponse,
     SuccessResponse,
 )
 from ....services.application_service import ApplicationService
@@ -743,6 +745,52 @@ async def get_audit_logs(
         page=page,
         page_size=page_size,
         audit_logs=audit_log_responses
+    )
+
+
+@router.get(
+    "/{application_id}/pending-jobs",
+    response_model=PendingJobListResponse,
+    summary="Get pending jobs for an application (DB Trigger -> Queue flow)",
+    responses={
+        200: {"description": "List of pending jobs"},
+        401: {"description": "Unauthorized - Invalid or missing JWT token"},
+        403: {"description": "Forbidden - Authentication required"},
+        404: {"model": ErrorResponse, "description": "Application not found"}
+    },
+    openapi_extra={
+        "security": [{"BearerAuth": []}]
+    }
+)
+async def get_pending_jobs(
+    application_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_auth)
+):
+    """Get pending jobs for an application (DB Trigger -> Queue flow).
+
+    CRITICAL: This endpoint shows the "DB Trigger -> Job Queue" flow (Requirement 3.7).
+    When a new application is INSERTED, a database trigger automatically creates a pending_job.
+    This endpoint returns those jobs, making the flow visible.
+
+    Returns:
+        List of pending jobs for the application, ordered by creation date (newest first).
+    """
+    service = ApplicationService(db)
+
+    application = await service.get_application(application_id)
+    if not application:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=ErrorMessages.APPLICATION_NOT_FOUND.format(application_id=application_id)
+        )
+
+    pending_jobs = await service.get_pending_jobs(application_id)
+
+    pending_job_responses = [PendingJobResponse.model_validate(job) for job in pending_jobs]
+
+    return PendingJobListResponse(
+        pending_jobs=pending_job_responses
     )
 
 

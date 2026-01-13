@@ -32,6 +32,7 @@ from .dlq_handler import handle_failed_job
 from .tasks import (
     cleanup_old_applications,
     cleanup_old_webhook_events,
+    consume_pending_jobs_from_db,
     monitor_table_partitioning,
     process_credit_application,
     send_webhook_notification,
@@ -62,6 +63,7 @@ class WorkerSettings:
         func(cleanup_old_applications, name='cleanup_old_applications'),
         func(cleanup_old_webhook_events, name='cleanup_old_webhook_events'),
         func(monitor_table_partitioning, name='monitor_table_partitioning'),
+        func(consume_pending_jobs_from_db, name='consume_pending_jobs_from_db'),
     ]
 
     cron_jobs = []
@@ -74,7 +76,15 @@ class WorkerSettings:
 
 
 if CRON_AVAILABLE and cron is not None:
-    WorkerSettings.cron_jobs = [
+    # CRITICAL: Consume pending jobs every minute (DB Trigger -> Queue flow)
+    # This makes the "DB Trigger -> Job Queue" flow visible (Requirement 3.7)
+    # Create a cron job for each minute (0-59) to process jobs created by database triggers
+    consume_jobs_crons = [
+        cron(consume_pending_jobs_from_db, minute=m)
+        for m in range(60)  # Run every minute
+    ]
+    
+    WorkerSettings.cron_jobs = consume_jobs_crons + [
         cron(cleanup_old_webhook_events, hour=3, minute=0),
         cron(monitor_table_partitioning, hour=4, minute=0),
     ]

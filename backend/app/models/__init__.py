@@ -5,6 +5,7 @@ Export all models for easy importing
 
 from .application import Application, ApplicationStatus, AuditLog, CountryCode
 from .failed_job import FailedJob
+from .pending_job import PendingJob, PendingJobStatus
 from .webhook_event import WebhookEvent, WebhookEventStatus
 
 __all__ = [
@@ -13,6 +14,8 @@ __all__ = [
     "ApplicationStatus",
     "CountryCode",
     "FailedJob",
+    "PendingJob",
+    "PendingJobStatus",
     "WebhookEvent",
     "WebhookEventStatus",
 ]
