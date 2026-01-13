@@ -359,6 +359,30 @@ created_at          TIMESTAMPTZ DEFAULT NOW()
 - Failed webhooks can be retried (status remains `failed` until retry succeeds)
 - 30-day TTL (cleanup cron job runs daily at 3 AM)
 
+#### `pending_jobs` (CRITICAL: DB Trigger -> Queue - Requirement 3.7)
+```sql
+id                  UUID PRIMARY KEY
+application_id      UUID FK applications         -- Application that triggered this job
+task_name           VARCHAR(255) DEFAULT 'process_credit_application'
+job_args            JSONB                         -- Job arguments (application_id, country, etc.)
+job_kwargs          JSONB                         -- Job keyword arguments
+status              ENUM (pending, enqueued, processing, completed, failed)
+arq_job_id          VARCHAR(255)                  -- ARQ job ID after enqueuing
+created_at          TIMESTAMPTZ DEFAULT NOW()      -- When created by DB trigger
+enqueued_at         TIMESTAMPTZ                    -- When enqueued to ARQ
+processed_at        TIMESTAMPTZ                    -- When processing completed
+updated_at          TIMESTAMPTZ DEFAULT NOW()
+error_message       TEXT                           -- Error if failed
+retry_count         INTEGER DEFAULT 0
+```
+
+**Features** (DB Trigger -> Queue Flow):
+- **CRITICAL**: Makes the "DB Trigger -> Job Queue" flow visible (Requirement 3.7)
+- Created automatically by `trigger_enqueue_application_processing` when application is INSERTED
+- Visible in database: `SELECT * FROM pending_jobs WHERE status = 'pending'`
+- Worker (`consume_pending_jobs_from_db`) consumes from this table and enqueues to ARQ
+- Demonstrates: "una operación en la base de datos genere trabajo a ser procesado de forma asíncrona"
+
 #### `failed_jobs`
 ```sql
 id                  UUID PRIMARY KEY
@@ -396,6 +420,33 @@ CREATE INDEX idx_applications_banking_data ON applications USING GIN (banking_da
 ```
 
 ### Database Triggers (Requirement 3.7)
+
+**CRITICAL: DB Trigger -> Job Queue Flow (Requirement 3.7)**
+
+This implementation makes the "DB Trigger -> Job Queue" flow **visible** and demonstrable, as required by Bravo:
+
+```sql
+-- Trigger that fires when a new application is INSERTED
+CREATE TRIGGER trigger_enqueue_application_processing
+    AFTER INSERT ON applications
+    FOR EACH ROW
+    WHEN (NEW.status = 'PENDING')
+    EXECUTE FUNCTION enqueue_application_processing();
+```
+
+**Flow:**
+1. **DB Trigger**: When a new application is `INSERTED` into `applications`, the trigger automatically creates a record in `pending_jobs` table
+2. **Visible Queue**: The `pending_jobs` table makes the queue visible in the database (you can query it with SQL)
+3. **Worker Consumption**: A periodic worker (`consume_pending_jobs_from_db`) runs every minute and:
+   - Reads pending jobs from `pending_jobs` table
+   - Enqueues them to ARQ (Redis) for actual processing
+   - Updates status to `enqueued` with ARQ job ID
+4. **Processing**: ARQ workers process the jobs asynchronously
+
+**Why This Matters:**
+- **Visibility**: You can see the queue in the database: `SELECT * FROM pending_jobs WHERE status = 'pending'`
+- **Demonstrable**: The flow is clear: DB Trigger → `pending_jobs` table → ARQ queue
+- **Requirement Compliance**: Fulfills the requirement: "una operación en la base de datos genere trabajo a ser procesado de forma asíncrona"
 
 **Automatic Audit Logging:**
 ```sql
@@ -1661,7 +1712,12 @@ This section documents the assumptions made and design decisions taken when requ
      - Composite indexes for country+status queries
      - GIN indexes for JSONB searches
 
-3. **Async Processing**
+3. **Async Processing** (Requirement 3.7)
+   - **DB Trigger -> Queue Flow**: CRITICAL requirement implementation
+     - When a new application is `INSERTED`, a database trigger (`trigger_enqueue_application_processing`) automatically creates a `pending_job` in the `pending_jobs` table
+     - This makes the "DB Trigger -> Job Queue" flow **visible** in the database
+     - A periodic worker (`consume_pending_jobs_from_db`) runs every minute and consumes from `pending_jobs`, enqueuing to ARQ
+     - You can query the queue: `SELECT * FROM pending_jobs WHERE status = 'pending'`
    - **Queue**: Redis with ARQ for job queue
    - **Workers**: Multiple workers can run in parallel (5 replicas in Kubernetes)
    - **Concurrency**: Each worker processes up to 10 jobs simultaneously

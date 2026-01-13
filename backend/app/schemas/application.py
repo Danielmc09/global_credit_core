@@ -240,6 +240,28 @@ class AuditLogListResponse(BaseModel):
     audit_logs: list[AuditLogResponse]
 
 
+class PendingJobResponse(BaseModel):
+    """Schema for pending job response (DB Trigger -> Queue flow)."""
+    id: UUID
+    application_id: UUID
+    task_name: str
+    status: str
+    arq_job_id: str | None
+    created_at: datetime
+    enqueued_at: datetime | None
+    processed_at: datetime | None
+    error_message: str | None
+    retry_count: int
+
+    class Config:
+        from_attributes = True
+
+
+class PendingJobListResponse(BaseModel):
+    """Schema for pending jobs list response."""
+    pending_jobs: list[PendingJobResponse]
+
+
 class WebhookBankConfirmation(BaseModel):
     """Schema for webhook payload from banking provider.
 

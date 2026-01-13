@@ -108,6 +108,12 @@ export const applicationAPI = {
     return response.data;
   },
 
+  // Get pending jobs (DB Trigger -> Queue flow)
+  getPendingJobs: async (id) => {
+    const response = await api.get(ENDPOINTS.APPLICATION_PENDING_JOBS(id));
+    return response.data;
+  },
+
   // Get country statistics
   getCountryStats: async (country) => {
     const response = await api.get(ENDPOINTS.APPLICATION_STATS_COUNTRY(country));

@@ -132,6 +132,7 @@ class Application(Base):
     )
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     webhook_events = relationship("WebhookEvent", back_populates="application", cascade="all, delete-orphan")
+    pending_jobs = relationship("PendingJob", back_populates="application", cascade="all, delete-orphan")
 
     def __repr__(self):
         return (

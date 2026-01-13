@@ -383,6 +383,123 @@ COMMENT ON COLUMN failed_jobs.retry_count IS 'Number of retries attempted before
 COMMENT ON COLUMN failed_jobs.max_retries IS 'Maximum retries configured';
 
 -- =====================================================
+-- PENDING JOBS TABLE (Requirement 3.7 - DB Trigger -> Queue)
+-- =====================================================
+-- CRITICAL: This table makes the "DB Trigger -> Job Queue" flow visible
+-- When a new application is INSERTED, a trigger automatically inserts a job here
+-- A worker then consumes from this table and enqueues to ARQ (Redis)
+-- This demonstrates the requirement: "una operación en la base de datos genere trabajo a ser procesado de forma asíncrona"
+
+-- Create enum for pending job status
+CREATE TYPE pending_job_status AS ENUM (
+    'pending',      -- Job created by trigger, waiting to be processed
+    'enqueued',     -- Job picked up by worker and enqueued to ARQ
+    'processing',   -- Job is being processed by ARQ worker
+    'completed',    -- Job completed successfully
+    'failed'        -- Job failed (moved to failed_jobs)
+);
+
+-- Pending jobs table (visible job queue in database)
+CREATE TABLE pending_jobs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    
+    -- Reference to application that triggered this job
+    application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    
+    -- Job metadata
+    task_name VARCHAR(255) NOT NULL DEFAULT 'process_credit_application',
+    job_args JSONB DEFAULT '{}',
+    job_kwargs JSONB DEFAULT '{}',
+    
+    -- Status tracking
+    status pending_job_status NOT NULL DEFAULT 'pending',
+    
+    -- ARQ job reference (set when enqueued to Redis)
+    arq_job_id VARCHAR(255),
+    
+    -- Processing timestamps
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    enqueued_at TIMESTAMP WITH TIME ZONE,
+    processed_at TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Error tracking
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0
+);
+
+-- Indexes for pending_jobs
+CREATE INDEX idx_pending_jobs_application_id ON pending_jobs(application_id);
+CREATE INDEX idx_pending_jobs_status ON pending_jobs(status, created_at ASC) WHERE status = 'pending';
+CREATE INDEX idx_pending_jobs_created_at ON pending_jobs(created_at ASC);
+CREATE INDEX idx_pending_jobs_arq_job_id ON pending_jobs(arq_job_id) WHERE arq_job_id IS NOT NULL;
+
+-- Trigger to auto-update updated_at timestamp
+CREATE TRIGGER update_pending_jobs_updated_at
+    BEFORE UPDATE ON pending_jobs
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Add comments for documentation
+COMMENT ON TABLE pending_jobs IS 'CRITICAL: Visible job queue created by DB triggers. Demonstrates "DB Trigger -> Job Queue" flow (Requirement 3.7)';
+COMMENT ON COLUMN pending_jobs.application_id IS 'Application that triggered this job via DB trigger';
+COMMENT ON COLUMN pending_jobs.status IS 'Job status: pending (created by trigger), enqueued (sent to ARQ), processing, completed, failed';
+COMMENT ON COLUMN pending_jobs.arq_job_id IS 'ARQ job ID after enqueuing to Redis';
+COMMENT ON COLUMN pending_jobs.task_name IS 'Task name to execute (default: process_credit_application)';
+
+-- =====================================================
+-- TRIGGER: Application INSERT -> Pending Job (Requirement 3.7)
+-- =====================================================
+-- CRITICAL: This trigger implements the requirement:
+-- "una operación en la base de datos genere trabajo a ser procesado de forma asíncrona"
+-- When a new application is INSERTED, this trigger automatically creates a pending_job
+-- A worker then consumes from pending_jobs and enqueues to ARQ (Redis)
+
+CREATE OR REPLACE FUNCTION enqueue_application_processing()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Only enqueue if status is PENDING (new application)
+    IF NEW.status = 'PENDING' THEN
+        INSERT INTO pending_jobs (
+            application_id,
+            task_name,
+            job_args,
+            status,
+            created_at
+        ) VALUES (
+            NEW.id,
+            'process_credit_application',
+            jsonb_build_object(
+                'application_id', NEW.id::text,
+                'country', NEW.country::text,
+                'triggered_by', 'database_trigger',
+                'triggered_at', CURRENT_TIMESTAMP
+            ),
+            'pending',
+            CURRENT_TIMESTAMP
+        );
+        
+        -- Log the trigger action (visible in PostgreSQL logs)
+        RAISE NOTICE 'DB Trigger: Created pending_job for application % (Requirement 3.7 - DB Trigger -> Queue)', NEW.id;
+    END IF;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger that fires AFTER INSERT on applications
+-- This makes the "DB Trigger -> Job Queue" flow visible and automatic
+CREATE TRIGGER trigger_enqueue_application_processing
+    AFTER INSERT ON applications
+    FOR EACH ROW
+    WHEN (NEW.status = 'PENDING')
+    EXECUTE FUNCTION enqueue_application_processing();
+
+-- Add comment for documentation
+COMMENT ON FUNCTION enqueue_application_processing() IS 'CRITICAL: DB Trigger that creates pending_job when application is INSERTED. Implements Requirement 3.7: "una operación en la base de datos genere trabajo a ser procesado de forma asíncrona"';
+COMMENT ON TRIGGER trigger_enqueue_application_processing ON applications IS 'CRITICAL: Automatically creates pending_job when new application is INSERTED. Makes "DB Trigger -> Job Queue" flow visible (Requirement 3.7)';
+
+-- =====================================================
 -- AUTOMATIC PARTITIONING FUNCTIONS
 -- =====================================================
 -- These functions enable automatic partitioning when tables exceed 1M records
@@ -710,12 +827,21 @@ COMMENT ON FUNCTION check_and_partition_table(TEXT, BIGINT, TEXT) IS 'Checks tab
 DO $$
 BEGIN
     RAISE NOTICE 'Database initialization completed successfully!';
-    RAISE NOTICE 'Tables created: applications, audit_logs, webhook_events, failed_jobs';
-    RAISE NOTICE 'Triggers created: audit_status_change (for automatic audit logging)';
+    RAISE NOTICE 'Tables created: applications, audit_logs, webhook_events, failed_jobs, pending_jobs';
+    RAISE NOTICE 'Triggers created:';
+    RAISE NOTICE '  - audit_status_change (for automatic audit logging)';
+    RAISE NOTICE '  - trigger_enqueue_application_processing (CRITICAL: DB Trigger -> Job Queue - Requirement 3.7)';
     RAISE NOTICE 'Indexes created for scalability';
     RAISE NOTICE 'Currency column added for country-specific currency validation';
     RAISE NOTICE 'Webhook events table added for idempotency';
     RAISE NOTICE 'PII ENCRYPTION: identity_document and full_name are encrypted (BYTEA) using pgcrypto';
     RAISE NOTICE 'IMPORTANT: Set ENCRYPTION_KEY environment variable (min 32 characters) for production';
     RAISE NOTICE 'IMPORTANT: All PII data is encrypted at rest for security compliance';
+    RAISE NOTICE '';
+    RAISE NOTICE '=== REQUIREMENT 3.7: DB TRIGGER -> JOB QUEUE ===';
+    RAISE NOTICE 'The trigger "trigger_enqueue_application_processing" automatically creates';
+    RAISE NOTICE 'a pending_job when a new application is INSERTED. This makes the';
+    RAISE NOTICE '"DB Trigger -> Job Queue" flow visible and demonstrates the requirement:';
+    RAISE NOTICE '"una operación en la base de datos genere trabajo a ser procesado de forma asíncrona"';
+    RAISE NOTICE 'A worker consumes from pending_jobs and enqueues to ARQ (Redis).';
 END $$;

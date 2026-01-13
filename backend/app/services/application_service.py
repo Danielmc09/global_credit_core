@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +24,7 @@ from ..core.encryption import decrypt_value, encrypt_for_query, encrypt_value
 from ..core.logging import get_logger
 from ..core.state_machine import validate_transition
 from ..models.application import Application, ApplicationStatus, AuditLog
+from ..models.pending_job import PendingJob
 from ..repositories.application_repository import ApplicationRepository
 from ..schemas.application import ApplicationCreate, ApplicationUpdate
 from ..strategies.factory import get_country_strategy
@@ -542,6 +543,33 @@ class ApplicationService:
         )
 
         return audit_logs, total
+
+    async def get_pending_jobs(self, application_id: UUID) -> list[PendingJob]:
+        """Get pending jobs for an application (DB Trigger -> Queue flow).
+
+        Args:
+            application_id: Application UUID
+
+        Returns:
+            List of pending jobs for the application
+        """
+        
+        query = select(PendingJob).where(
+            PendingJob.application_id == application_id
+        ).order_by(PendingJob.created_at.desc())
+        
+        result = await self.db.execute(query)
+        pending_jobs = result.scalars().all()
+        
+        logger.info(
+            "Listed pending jobs",
+            extra={
+                'application_id': str(application_id),
+                'count': len(pending_jobs)
+            }
+        )
+        
+        return pending_jobs
 
     async def get_statistics_by_country(self, country: str) -> dict[str, Any]:
         """Get application statistics for a country.

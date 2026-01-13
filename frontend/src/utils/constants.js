@@ -12,6 +12,7 @@ export const ENDPOINTS = {
   APPLICATIONS: '/applications',
   APPLICATION_BY_ID: (id) => `/applications/${id}`,
   APPLICATION_AUDIT: (id) => `/applications/${id}/audit`,
+  APPLICATION_PENDING_JOBS: (id) => `/applications/${id}/pending-jobs`,
   APPLICATION_STATS_COUNTRY: (country) => `/applications/stats/country/${country}`,
   APPLICATION_SUPPORTED_COUNTRIES: '/applications/meta/supported-countries',
 };

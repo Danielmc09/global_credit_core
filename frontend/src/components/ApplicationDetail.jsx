@@ -30,7 +30,7 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
       ]);
 
       setApplication(appData);
-      setAuditLogs(auditData);
+      setAuditLogs(auditData.audit_logs || auditData);
       setNewStatus(appData.status);
     } catch (err) {
       setError('Error loading application details');
@@ -352,10 +352,10 @@ function ApplicationDetail({ applicationId, onClose, onUpdate }) {
             )}
           </section>
 
-          {/* Audit Logs */}
+          {/* Audit Logs - Shows the business flow (status changes) */}
           {auditLogs.length > 0 && (
             <section className="detail-section">
-              <h3>Audit Trail</h3>
+              <h3>Application Flow (Status Changes)</h3>
               <div className="audit-logs">
                 {auditLogs.map((log) => (
                   <div key={log.id} className="audit-log-item">

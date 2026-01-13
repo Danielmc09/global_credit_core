@@ -82,6 +82,7 @@ except ImportError:
 
 from ..db.database import AsyncSessionLocal
 from ..models.application import Application, ApplicationStatus
+from ..models.pending_job import PendingJob, PendingJobStatus
 from ..models.webhook_event import WebhookEvent
 from ..services.partitioning_service import monitor_and_partition_tables
 from ..services.websocket_service import broadcast_application_update
@@ -772,5 +773,155 @@ async def enqueue_application_processing(application_id: str):
 
         return job
 
+    finally:
+        await redis.close()
+
+
+async def consume_pending_jobs_from_db(ctx):
+    """CRITICAL: Consume pending jobs created by DB triggers and enqueue to ARQ.
+    
+    This task implements Requirement 3.7: "una operación en la base de datos genere
+    trabajo a ser procesado de forma asíncrona (por ejemplo: en una cola de trabajos)."
+    
+    Flow:
+    1. DB Trigger (trigger_enqueue_application_processing) creates pending_job when application is INSERTED
+    2. This worker consumes from pending_jobs table (visible in DB)
+    3. Enqueues to ARQ (Redis) for actual processing
+    4. Updates pending_job status to 'enqueued'
+    
+    This makes the "DB Trigger -> Job Queue" flow visible and demonstrable.
+    
+    Args:
+        ctx: ARQ worker context
+        
+    Returns:
+        dict: Summary of processed jobs
+    """
+    set_request_id("consume-pending-jobs")
+    
+    logger.info("Starting consumption of pending jobs from database (DB Trigger -> Queue flow)")
+    
+    redis_settings = RedisSettings.from_dsn(settings.REDIS_URL)
+    redis = await create_pool(redis_settings)
+    
+    try:
+        async with AsyncSessionLocal() as db:
+            # Fetch pending jobs (limit to avoid overwhelming the system)
+            pending_jobs_query = select(PendingJob).where(
+                PendingJob.status == PendingJobStatus.PENDING.value
+            ).order_by(PendingJob.created_at.asc()).limit(50)
+            
+            result = await db.execute(pending_jobs_query)
+            pending_jobs = result.scalars().all()
+            
+            if not pending_jobs:
+                logger.debug("No pending jobs found in database")
+                return {
+                    'status': 'completed',
+                    'jobs_processed': 0,
+                    'jobs_enqueued': 0,
+                    'jobs_failed': 0
+                }
+            
+            logger.info(
+                f"Found {len(pending_jobs)} pending jobs to process",
+                extra={'pending_count': len(pending_jobs)}
+            )
+            
+            enqueued_count = 0
+            failed_count = 0
+            
+            for pending_job in pending_jobs:
+                try:
+                    # Extract application_id from job_args or use application_id directly
+                    application_id = pending_job.job_args.get('application_id') if pending_job.job_args else None
+                    if not application_id:
+                        application_id = str(pending_job.application_id)
+                    
+                    # Prepare trace context
+                    trace_context = {}
+                    inject_trace_context(trace_context)
+                    
+                    # Enqueue to ARQ (Redis)
+                    arq_job = await redis.enqueue_job(
+                        pending_job.task_name or 'process_credit_application',
+                        application_id,
+                        trace_context if trace_context else None
+                    )
+                    
+                    # Update pending_job status
+                    pending_job.status = PendingJobStatus.ENQUEUED.value
+                    pending_job.arq_job_id = arq_job.job_id if arq_job else None
+                    pending_job.enqueued_at = datetime.now(UTC)
+                    
+                    await db.commit()
+                    
+                    enqueued_count += 1
+                    
+                    logger.info(
+                        "Pending job enqueued to ARQ (DB Trigger -> Queue flow)",
+                        extra={
+                            'pending_job_id': str(pending_job.id),
+                            'application_id': application_id,
+                            'arq_job_id': arq_job.job_id if arq_job else None,
+                            'triggered_by': 'database_trigger'
+                        }
+                    )
+                    
+                except Exception as e:
+                    await db.rollback()
+                    failed_count += 1
+                    
+                    # Update pending_job with error
+                    try:
+                        pending_job.status = PendingJobStatus.FAILED.value
+                        pending_job.error_message = str(e)
+                        pending_job.retry_count = (pending_job.retry_count or 0) + 1
+                        await db.commit()
+                    except Exception as commit_error:
+                        await db.rollback()
+                        logger.error(
+                            "Failed to update pending_job status after error",
+                            extra={'error': str(commit_error)},
+                            exc_info=True
+                        )
+                    
+                    logger.error(
+                        "Failed to enqueue pending job to ARQ",
+                        extra={
+                            'pending_job_id': str(pending_job.id),
+                            'application_id': str(pending_job.application_id),
+                            'error': str(e),
+                            'error_type': type(e).__name__
+                        },
+                        exc_info=True
+                    )
+            
+            logger.info(
+                "Completed consumption of pending jobs (DB Trigger -> Queue flow)",
+                extra={
+                    'total_found': len(pending_jobs),
+                    'enqueued': enqueued_count,
+                    'failed': failed_count
+                }
+            )
+            
+            return {
+                'status': 'completed',
+                'jobs_found': len(pending_jobs),
+                'jobs_enqueued': enqueued_count,
+                'jobs_failed': failed_count
+            }
+            
+    except Exception as e:
+        logger.error(
+            "Unexpected error consuming pending jobs",
+            extra={
+                'error': str(e),
+                'error_type': type(e).__name__
+            },
+            exc_info=True
+        )
+        raise
     finally:
         await redis.close()
