@@ -1,8 +1,3 @@
-"""Cache Service.
-
-Redis-based caching layer for improving response times (Requirement 4.7).
-"""
-
 import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -16,7 +11,7 @@ from redis.exceptions import (
 from ..core.config import settings
 from ..core.constants import Cache, Pagination
 from ..core.logging import get_logger
-from ..core.metrics import (
+from ..infrastructure.monitoring import (
     cache_connection_status,
     cache_errors_total,
     cache_operations_total,
@@ -47,6 +42,7 @@ class CacheService:
         self._consecutive_failures = 0
         self._max_consecutive_failures = 5
 
+
     async def connect(self):
         """Establish Redis connection."""
         if not self._connected:
@@ -76,6 +72,7 @@ class CacheService:
                 )
                 raise
 
+
     async def disconnect(self):
         """Close Redis connection."""
         if self.redis and self._connected:
@@ -93,6 +90,7 @@ class CacheService:
                 self._connected = False
                 cache_connection_status.set(0)
 
+
     def _classify_error(self, error: Exception) -> str:
         """Classify error type for metrics and alerting.
         
@@ -109,6 +107,7 @@ class CacheService:
         else:
             return 'other'
     
+
     def _handle_cache_error(
         self,
         operation: str,
@@ -174,6 +173,7 @@ class CacheService:
                 }
             )
 
+
     async def get(self, key: str) -> Any | None:
         """Get value from cache.
 
@@ -210,6 +210,7 @@ class CacheService:
         except Exception as e:
             self._handle_cache_error('get', e, key=key)
             return None
+
 
     async def set(
         self,
@@ -251,6 +252,7 @@ class CacheService:
         except Exception as e:
             self._handle_cache_error('set', e, key=key)
 
+
     async def delete(self, key: str):
         """Delete value from cache.
 
@@ -275,6 +277,7 @@ class CacheService:
 
         except Exception as e:
             self._handle_cache_error('delete', e, key=key)
+
 
     async def delete_pattern(self, pattern: str):
         """Delete all keys matching a pattern.
@@ -307,6 +310,7 @@ class CacheService:
         except Exception as e:
             self._handle_cache_error('delete_pattern', e, pattern=pattern)
 
+
     async def invalidate_application(self, application_id: str):
         """Invalidate all cache entries related to an application.
 
@@ -325,6 +329,7 @@ class CacheService:
             "Application cache invalidated",
             extra={'application_id': application_id}
         )
+
 
     async def get_country_stats_cached(
         self,

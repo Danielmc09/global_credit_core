@@ -1,12 +1,7 @@
-"""Failed Job Model for Dead Letter Queue.
-
-Stores jobs that have failed after maximum retries for manual review and reprocessing.
-"""
-
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, String, Text, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 
 from ..db.database import Base
@@ -23,6 +18,12 @@ class FailedJob(Base):
         default=uuid4,
         server_default=text("uuid_generate_v4()")
     )
+    pending_job_id = Column(
+        PGUUID(as_uuid=True),
+        ForeignKey("pending_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="Reference to original pending_job (if available)"
+    )
     job_id = Column(String(255), nullable=False, unique=True, comment="ARQ job ID")
     task_name = Column(String(255), nullable=False, comment="Task function name")
     job_args = Column(JSONB, default={}, comment="Job arguments")
@@ -36,7 +37,13 @@ class FailedJob(Base):
         String(50),
         nullable=False,
         default="pending",
-        comment="Status: pending, reviewed, reprocessed, ignored"
+        comment="Status: pending, reviewed, reprocessed, ignored, retried"
+    )
+    is_retryable = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        comment="Whether this job should be automatically retried (e.g., ProviderUnavailableError)"
     )
     reviewed_by = Column(String(255), nullable=True, comment="User who reviewed the job")
     reviewed_at = Column(DateTime(timezone=True), nullable=True, comment="When job was reviewed")

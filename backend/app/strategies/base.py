@@ -1,15 +1,8 @@
-"""Base Strategy Pattern for Country-Specific Business Rules.
-
-This module defines the abstract interface that all country strategies must implement.
-Each country has different validation rules, document types, and banking providers.
-"""
-
 from abc import ABC, abstractmethod
 from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel
-
 
 class ValidationResult(BaseModel):
     """Result of validation operations."""
@@ -17,7 +10,6 @@ class ValidationResult(BaseModel):
     errors: list[str] = []
     warnings: list[str] = []
     metadata: dict[str, Any] = {}
-
 
 class BankingData(BaseModel):
     """Banking data obtained from provider."""
@@ -69,6 +61,7 @@ class BaseCountryStrategy(ABC):
         self.country_name = country_name
         self.banking_provider = banking_provider
 
+
     @abstractmethod
     def validate_identity_document(self, document: str) -> ValidationResult:
         """Validate the identity document format and checksum for this country.
@@ -79,6 +72,7 @@ class BaseCountryStrategy(ABC):
         Returns:
             ValidationResult with validation status and any errors
         """
+
 
     async def get_banking_data(
         self,
@@ -108,10 +102,10 @@ class BaseCountryStrategy(ABC):
             )
         
         # Use provider with circuit breaker protection
-        from ..core.circuit_breaker import call_provider_with_circuit_breaker
+        from ..infrastructure.resilience.circuit_breaker import call_provider_with_circuit_breaker
         
         # Get provider name from provider
-        provider_name = self.banking_provider.get_provider_name()
+        provider_name = self.banking_provider.get_provider_name() 
         
         return await call_provider_with_circuit_breaker(
             provider_func=self.banking_provider.fetch_banking_data,
@@ -120,6 +114,7 @@ class BaseCountryStrategy(ABC):
             document=document,
             full_name=full_name
         )
+
 
     @abstractmethod
     def apply_business_rules(
@@ -167,6 +162,7 @@ class BaseCountryStrategy(ABC):
         """Get the name of the document type for this country."""
         return "Identity Document"
 
+
     def get_required_fields(self) -> list[str]:
         """Get list of required fields for this country."""
         return [
@@ -176,6 +172,7 @@ class BaseCountryStrategy(ABC):
             "requested_amount",
             "monthly_income"
         ]
+
 
     def calculate_debt_to_income_ratio(
         self,
@@ -196,6 +193,7 @@ class BaseCountryStrategy(ABC):
         if abs(monthly_income) < Decimal('0.01'):
             return Decimal('100.0')
         return (monthly_debt / monthly_income) * Decimal('100.0')
+
 
     def calculate_payment_to_income_ratio(
         self,

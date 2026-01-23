@@ -37,6 +37,7 @@ class PayloadSizeMiddleware(BaseHTTPMiddleware):
         else:
             self.max_size_bytes = max_size_bytes
 
+
     async def dispatch(self, request: Request, call_next):
         """Validate payload size before processing request.
 

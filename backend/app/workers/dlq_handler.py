@@ -1,16 +1,9 @@
-"""Dead Letter Queue Handler.
-
-Handles failed jobs after maximum retries and stores them in the DLQ.
-
-ARQ calls this handler when a job fails after max_tries.
-The handler stores the failed job in the database for manual review.
-"""
-
 from typing import Any
 
 from ..core.logging import get_logger
 from ..db.database import AsyncSessionLocal
 from ..services.failed_job_service import FailedJobService
+from ..services.pending_job_service import PendingJobService
 
 logger = get_logger(__name__)
 
@@ -61,6 +54,32 @@ async def handle_failed_job(ctx: dict[str, Any], job: Any, exc: Exception) -> No
 
         async with AsyncSessionLocal() as db:
             try:
+                # First, find and update the corresponding pending_job
+                pending_job_service = PendingJobService(db)
+                pending_job = await pending_job_service.find_by_arq_job_id(job_id)
+                
+                pending_job_id = None
+                if pending_job:
+                    # Update pending_job status to failed
+                    await pending_job_service.mark_as_failed(
+                        job_id,
+                        error_message=str(exc)
+                    )
+                    pending_job_id = pending_job.id
+                    logger.info(
+                        "Updated pending_job status to failed",
+                        extra={
+                            'job_id': job_id,
+                            'pending_job_id': str(pending_job_id)
+                        }
+                    )
+                else:
+                    logger.warning(
+                        "Could not find pending_job for failed job",
+                        extra={'job_id': job_id}
+                    )
+                
+                # Now create the failed_job record with pending_job reference
                 failed_job_service = FailedJobService(db)
                 await failed_job_service.create_failed_job(
                     job_id=job_id,
@@ -70,7 +89,8 @@ async def handle_failed_job(ctx: dict[str, Any], job: Any, exc: Exception) -> No
                     error=exc,
                     retry_count=retry_count,
                     max_retries=max_retries,
-                    metadata=metadata
+                    metadata=metadata,
+                    pending_job_id=pending_job_id
                 )
                 await db.commit()
 
@@ -78,7 +98,8 @@ async def handle_failed_job(ctx: dict[str, Any], job: Any, exc: Exception) -> No
                     "Failed job stored in Dead Letter Queue",
                     extra={
                         'job_id': job_id,
-                        'task_name': task_name
+                        'task_name': task_name,
+                        'pending_job_id': str(pending_job_id) if pending_job_id else None
                     }
                 )
             except Exception as db_error:

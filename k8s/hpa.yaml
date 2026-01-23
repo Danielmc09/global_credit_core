@@ -1,4 +1,8 @@
 ---
+# ============================================================================
+# 1. API SCALING (Standard HPA)
+# La API escala por CPU/Memoria porque recibe peticiones HTTP directas.
+# ============================================================================
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -42,30 +46,60 @@ spec:
       selectPolicy: Max
 
 ---
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
+# ============================================================================
+# 2. WORKER SCALING (KEDA ScaledObject)
+# El Worker escala por "Ansiedad de la Cola" (Redis) para máxima velocidad.
+# ============================================================================
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
 metadata:
-  name: credit-worker-hpa
+  name: credit-worker-scaledobject
+  namespace: default
 spec:
   scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
     name: credit-worker
-  minReplicas: 2
-  maxReplicas: 20
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 75
-  behavior:
-    scaleDown:
-      stabilizationWindowSeconds: 300
-    scaleUp:
-      stabilizationWindowSeconds: 0
-      policies:
-      - type: Pods
-        value: 4
-        periodSeconds: 60
+    kind: Deployment
+    apiVersion: apps/v1
+
+  # Siempre tener al menos 2 workers encendidos para alta disponibilidad
+  minReplicaCount: 2
+  # Límite máximo para no quemar la tarjeta de crédito en la nube
+  maxReplicaCount: 20
+
+  # Configuración avanzada de comportamiento (opcional, igual que HPA)
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300 # Esperar 5 min antes de matar workers libres
+
+  triggers:
+    # ------------------------------------------------------------------------
+    # A. Trigger Principal: REDIS (La "Ansiedad" del Sistema)
+    # ------------------------------------------------------------------------
+    - type: redis
+      metadata:
+        # En producción real, esto debe apuntar a tu servicio de Redis
+        # address: redis-service.default.svc.cluster.local:6379 
+        # O mejor, usar un TriggerAuthentication para leer el secret:
+        addressFromEnv: REDIS_URL # KEDA leerá la variable de entorno del pod
+        
+        # Nombre de la lista en Redis que usa ARQ
+        listName: arq:queue
+        
+        # LA REGLA DE ORO: "Por cada 100 tareas en cola, dame 1 pod más"
+        # Si hay 1M tareas -> Pedirá (1M / 100) = 10,000 pods (limitado a maxReplicaCount=20)
+        listLength: "100"
+      
+      # Si Redis tiene contraseña, descomentar esto:
+      # authenticationRef:
+      #   name: keda-redis-auth
+
+    # ------------------------------------------------------------------------
+    # B. Trigger Secundario: CPU (Red de Seguridad)
+    # ------------------------------------------------------------------------
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        # Si la CPU sube al 75%, también escala (útil si el proceso es pesado)
+        value: "75"

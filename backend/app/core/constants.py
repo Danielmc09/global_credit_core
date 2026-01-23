@@ -31,8 +31,18 @@ class ApplicationStatus:
         CANCELLED,
     ]
 
+    # List of active statuses (applications that are still in progress)
+    # Used for duplicate detection - only one active application per document/country
+    ACTIVE_STATUSES = [
+        PENDING,
+        VALIDATING,
+        APPROVED,
+        UNDER_REVIEW,
+    ]
+
     # Default status for new applications
     DEFAULT_STATUS = PENDING
+
 
 
 # ============================================================================
@@ -47,6 +57,7 @@ class CountryCode:
     MEXICO = "MX"
     COLOMBIA = "CO"
     BRAZIL = "BR"
+    ARGENTINA = "AR"
 
     # List of all supported countries
     SUPPORTED_COUNTRIES = [
@@ -89,6 +100,7 @@ class Currency:
     BRL = "BRL"  # Brazilian Real (Brazil)
     MXN = "MXN"  # Mexican Peso (Mexico)
     COP = "COP"  # Colombian Peso (Colombia)
+    ARG = "ARS"
 
     # List of all supported currencies
     SUPPORTED_CURRENCIES = [
@@ -96,6 +108,7 @@ class Currency:
         BRL,
         MXN,
         COP,
+        ARG
     ]
 
 
@@ -108,6 +121,8 @@ COUNTRY_CURRENCY: dict[str, str] = {
     CountryCode.BRAZIL: Currency.BRL,
     CountryCode.MEXICO: Currency.MXN,
     CountryCode.COLOMBIA: Currency.COP,
+    CountryCode.ARGENTINA: Currency.ARG
+
 }
 
 
@@ -334,6 +349,11 @@ class HttpHeaders:
     """HTTP header names."""
     REQUEST_ID = "X-Request-ID"
     PROCESS_TIME = "X-Process-Time"
+    WEBHOOK_SIGNATURE = "X-Webhook-Signature"
+    AUTHORIZATION = "Authorization"
+    CONTENT_TYPE = "Content-Type"
+    ACCEPT = "Accept"
+    CONTENT_LENGTH = "Content-Length"
 
 
 # ============================================================================
@@ -529,7 +549,7 @@ class WebSocket:
     """WebSocket connection and retry constants."""
     # Redis subscriber retry configuration
     MAX_RETRIES = 10
-    INITIAL_BACKOFF_SECONDS = 5
+    INITIAL_BACKOFF_SECONDS = 5 
     MAX_BACKOFF_SECONDS = 300  # 5 minutes
 
 

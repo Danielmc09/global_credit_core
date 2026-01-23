@@ -70,6 +70,26 @@ class RateLimitError(RecoverableError):
     pass
 
 
+class ProviderUnavailableError(RecoverableError):
+    """External provider is unavailable (circuit breaker open).
+    
+    This error indicates the external provider (bank) service is down
+    or unreachable. Unlike other recoverable errors, this specifically
+    indicates the circuit breaker has opened due to repeated failures.
+    
+    Jobs failing with this error should be:
+    - Stored in the retry queue (failed_jobs table)
+    - Marked as 'retryable'
+    - Automatically retried when circuit closes
+    
+    This error is raised when:
+    - Circuit breaker is open (too many failures)
+    - Provider is experiencing downtime
+    - Network connectivity to provider is lost
+    """
+    pass
+
+
 # Specific permanent errors
 class InvalidApplicationIdError(PermanentError):
     """Invalid application ID format or value."""

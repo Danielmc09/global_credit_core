@@ -1,26 +1,22 @@
-"""Application Endpoints.
-
-RESTful API endpoints for credit applications.
-"""
-
-from functools import wraps
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from slowapi import Limiter
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ....core.config import settings
+from ....domain.transformers import (
+    application_to_response,
+    convert_applications_to_responses,
+)
+from ..helpers.rate_limit_helpers import apply_rate_limit_if_needed
 from ....core.constants import (
     ErrorMessages,
     Pagination,
     SuccessMessages,
 )
-from ....core.dependencies import require_admin, require_auth
-from ....core.encryption import decrypt_value
+from ...dependencies import require_admin, require_auth
 from ....core.logging import get_logger, get_request_id
-from ....core.rate_limiting import get_rate_limit_key
+from ....domain.validators import is_duplicate_constraint_error
 from ....db.database import get_db
 from ....models.application import ApplicationStatus
 from ....schemas.application import (
@@ -37,123 +33,13 @@ from ....schemas.application import (
 )
 from ....services.application_service import ApplicationService
 from ....services.cache_service import cache
-from ....services.websocket_service import broadcast_application_update
 from ....strategies.factory import CountryStrategyFactory
-from ....utils.helpers import sanitize_log_data
+from ....utils import sanitize_log_data
 from ....utils.transaction_helpers import safe_rollback, safe_transaction
-from ....workers.tasks import enqueue_application_processing
 
 logger = get_logger(__name__)
 
 router = APIRouter()
-
-limiter = Limiter(key_func=get_rate_limit_key)
-
-
-async def application_to_response(
-    db: AsyncSession, 
-    app,
-    decrypted_full_name: str | None = None,
-    decrypted_identity_document: str | None = None
-) -> ApplicationResponse:
-    """Convert Application ORM object to ApplicationResponse, decrypting PII fields.
-
-    Args:
-        db: Database session for decryption (used if values not pre-decrypted)
-        app: Application ORM object
-        decrypted_full_name: Optional pre-decrypted full name (if None, will decrypt)
-        decrypted_identity_document: Optional pre-decrypted identity document (if None, will decrypt)
-
-    Returns:
-        ApplicationResponse with decrypted fields
-    """
-    if decrypted_full_name is not None:
-        decrypted_name = decrypted_full_name
-    elif app.full_name:
-        if isinstance(app.full_name, str):
-            decrypted_name = app.full_name
-        else:
-            try:
-                if not db.in_transaction():
-                    await db.begin()
-                decrypted_name = await decrypt_value(db, app.full_name)
-            except Exception as e:
-                logger.warning(
-                    "Decryption failed, attempting with new transaction",
-                    extra={'error': str(e), 'error_type': type(e).__name__}
-                )
-                try:
-                    if not db.in_transaction():
-                        await db.begin()
-                    decrypted_name = await decrypt_value(db, app.full_name)
-                except Exception as retry_error:
-                    logger.error(
-                        "Decryption failed after retry",
-                        extra={'error': str(retry_error), 'error_type': type(retry_error).__name__}
-                    )
-                    raise ValueError(f"Decryption failed: {str(retry_error)}") from retry_error
-    else:
-        decrypted_name = ""
-    
-    if decrypted_identity_document is not None:
-        decrypted_doc = decrypted_identity_document
-    elif app.identity_document:
-        if isinstance(app.identity_document, str):
-            decrypted_doc = app.identity_document
-        else:
-            try:
-                if not db.in_transaction():
-                    await db.begin()
-                decrypted_doc = await decrypt_value(db, app.identity_document)
-            except Exception as e:
-                logger.warning(
-                    "Decryption failed, attempting with new transaction",
-                    extra={'error': str(e), 'error_type': type(e).__name__}
-                )
-                try:
-                    if not db.in_transaction():
-                        await db.begin()
-                    decrypted_doc = await decrypt_value(db, app.identity_document)
-                except Exception as retry_error:
-                    logger.error(
-                        "Decryption failed after retry",
-                        extra={'error': str(retry_error), 'error_type': type(retry_error).__name__}
-                    )
-                    raise ValueError(f"Decryption failed: {str(retry_error)}") from retry_error
-    else:
-        decrypted_doc = ""
-
-    app_dict = {
-        "id": app.id,
-        "country": app.country,
-        "full_name": decrypted_name,
-        "identity_document": decrypted_doc,
-        "requested_amount": app.requested_amount,
-        "monthly_income": app.monthly_income,
-        "currency": app.currency,
-        "status": app.status,
-        "risk_score": app.risk_score,
-        "idempotency_key": app.idempotency_key,
-        "country_specific_data": app.country_specific_data or {},
-        "banking_data": app.banking_data or {},
-        "validation_errors": app.validation_errors or [],
-        "created_at": app.created_at,
-        "updated_at": app.updated_at,
-    }
-
-    return ApplicationResponse.model_validate(app_dict)
-
-def apply_rate_limit_if_needed(func):
-    """Apply rate limiting only if not in test environment.
-    
-    Uses settings.ENVIRONMENT to check the current environment.
-    Since conftest.py sets ENVIRONMENT="test" in os.environ before
-    importing application code, settings will correctly capture this value.
-    """
-    if settings.ENVIRONMENT == "test":
-        return func
-    
-    return limiter.limit("10/minute")(func)
 
 
 @router.post(
@@ -241,112 +127,32 @@ async def create_application(
     - If the same `idempotency_key` is sent twice, the existing application will be returned
     - Clients should generate a unique key (e.g., UUID) for each request to ensure idempotency
     """
-    service = ApplicationService(db)
+    service = ApplicationService(
+        db,
+        redis=request.app.state.arq_pool,  # ARQ pool for job enqueuing
+        cache_service=cache
+    )
 
     try:
-        request_idempotency_key = application.idempotency_key
-        
-        decrypted_name = None
-        decrypted_doc = None
-        
-        async with safe_transaction(db):
-            app = await service.create_application(application)
-            await db.refresh(app)
-            
-            if app.full_name:
-                if isinstance(app.full_name, str):
-                    decrypted_name = app.full_name
-                else:
-                    decrypted_name = await decrypt_value(db, app.full_name)
-            else:
-                decrypted_name = ""
-            
-            if app.identity_document:
-                if isinstance(app.identity_document, str):
-                    decrypted_doc = app.identity_document
-                else:
-                    decrypted_doc = await decrypt_value(db, app.identity_document)
-            else:
-                decrypted_doc = ""
-
-        from datetime import UTC, datetime, timedelta
-        is_new_application = True
-        if request_idempotency_key and app.idempotency_key == request_idempotency_key:
-            now = datetime.now(UTC)
-            created_at = app.created_at
-            if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=UTC)
-            time_since_creation = now - created_at
-            if time_since_creation > timedelta(seconds=5):
-                is_new_application = False
-                logger.info(
-                    "Idempotent request detected - returning existing application",
-                    extra={
-                        'application_id': str(app.id),
-                        'idempotency_key': request_idempotency_key,
-                        'created_at': app.created_at.isoformat(),
-                        'request_id': get_request_id()
-                    }
-                )
-
-        if is_new_application:
-            await enqueue_application_processing(str(app.id))
-            logger.info(
-                "Application created and queued",
-                extra={
-                    'application_id': str(app.id),
-                    'idempotency_key': request_idempotency_key,
-                    'request_id': get_request_id()
-                }
-            )
-        else:
-            logger.info(
-                "Idempotent request - existing application returned (not queued)",
-                extra={
-                    'application_id': str(app.id),
-                    'idempotency_key': request_idempotency_key,
-                    'request_id': get_request_id()
-                }
-            )
-
-        try:
-            await cache.invalidate_application(str(app.id))
-        except Exception as e:
-            logger.warning(
-                "Failed to invalidate cache after application creation",
-                extra={'error': str(e), 'application_id': str(app.id)}
-            )
-
-        return await application_to_response(
-            db, 
-            app, 
-            decrypted_full_name=decrypted_name,
-            decrypted_identity_document=decrypted_doc
-        )
+        app = await service.create_and_enqueue(application)
+        return await application_to_response(db, app)
 
     except ValueError as e:
         await safe_rollback(db, e, "application creation - validation error")
         logger.error(
-            "Application creation failed",
-            extra={
-                'error': str(e),
-                'request_id': get_request_id()
-            }
+            "Application creation failed - validation error",
+            extra={'error': str(e), 'request_id': get_request_id()}
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
+        
     except IntegrityError as e:
         await safe_rollback(db, e, "application creation - integrity error")
         error_str = str(e.orig) if hasattr(e, 'orig') else str(e)
 
-        error_str_lower = error_str.lower()
-        if ('unique_document_per_country' in error_str or
-            'duplicate key' in error_str_lower or
-            'unique constraint failed' in error_str_lower or
-            'applications.country' in error_str or
-            'applications.identity_document' in error_str):
+        if is_duplicate_constraint_error(error_str):
             logger.warning(
                 "Duplicate application attempt (database constraint)",
                 extra=sanitize_log_data({
@@ -359,27 +165,22 @@ async def create_application(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"An active application with document '{application.identity_document}' already exists for country '{application.country}'. Only one active application per document and country is allowed. Cancelled applications can be replaced with a new one."
             )
-        else:
-            logger.error(
-                "Database integrity error",
-                extra={
-                    'error': error_str,
-                    'request_id': get_request_id()
-                },
-                exc_info=True
-            )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Database constraint violation. Please check your input data."
-            )
+        
+        logger.error(
+            "Database integrity error",
+            extra={'error': error_str, 'request_id': get_request_id()},
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Database constraint violation. Please check your input data."
+        )
+        
     except Exception as e:
         await safe_rollback(db, e, "application creation - unexpected error")
         logger.error(
             "Unexpected error creating application",
-            extra={
-                'error': str(e),
-                'request_id': get_request_id()
-            },
+            extra={'error': str(e), 'request_id': get_request_id()},
             exc_info=True
         )
         raise HTTPException(
@@ -426,6 +227,7 @@ async def list_applications(
     try:
         service = ApplicationService(db)
 
+        # Fetch applications from database
         applications, total = await service.list_applications(
             country=country,
             status=status_filter,
@@ -433,22 +235,8 @@ async def list_applications(
             page_size=page_size
         )
 
-        application_responses = []
-        for app in applications:
-            try:
-                application_responses.append(await application_to_response(db, app))
-            except Exception as decrypt_error:
-                logger.warning(
-                    "Failed to decrypt application during list",
-                    extra={
-                        'application_id': str(app.id) if app else None,
-                        'error': str(decrypt_error),
-                        'error_type': type(decrypt_error).__name__,
-                        'request_id': get_request_id()
-                    }
-                )
-                continue
-        
+        # Convert to response format (with error handling for decryption failures)
+        application_responses = await convert_applications_to_responses(db, applications, logger)
 
         return ApplicationListResponse(
             total=total,
@@ -456,6 +244,7 @@ async def list_applications(
             page_size=page_size,
             applications=application_responses
         )
+        
     except Exception as e:
         logger.error(
             "Error listing applications",
@@ -512,6 +301,40 @@ async def get_application(
     return await application_to_response(db, application)
 
 
+async def _update_application_in_transaction(
+    service: ApplicationService,
+    application_id: UUID,
+    update_data: ApplicationUpdate,
+    db: AsyncSession
+):
+    """Update application within transaction.
+    
+    Args:
+        service: Application service instance
+        application_id: Application ID to update
+        update_data: Update data
+        db: Database session
+        
+    Returns:
+        Updated application
+        
+    Raises:
+        HTTPException: If application not found
+    """
+    async with safe_transaction(db):
+        application = await service.update_application(application_id, update_data)
+        
+        if not application:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=ErrorMessages.APPLICATION_NOT_FOUND.format(application_id=application_id)
+            )
+        
+        await db.refresh(application)
+    
+    return application
+
+
 @router.patch(
     "/{application_id}",
     response_model=ApplicationResponse,
@@ -542,83 +365,44 @@ async def update_application(
     service = ApplicationService(db)
 
     try:
-        decrypted_name = None
-        decrypted_doc = None
+        application = await _update_application_in_transaction(
+            service, application_id, update_data, db
+        )
         
-        async with safe_transaction(db):
-            application = await service.update_application(application_id, update_data)
-
-            if not application:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=ErrorMessages.APPLICATION_NOT_FOUND.format(application_id=application_id)
-                )
-
-            if application.full_name:
-                if isinstance(application.full_name, str):
-                    decrypted_name = application.full_name
-                else:
-                    decrypted_name = await decrypt_value(db, application.full_name)
-            else:
-                decrypted_name = ""
-            
-            if application.identity_document:
-                if isinstance(application.identity_document, str):
-                    decrypted_doc = application.identity_document
-                else:
-                    decrypted_doc = await decrypt_value(db, application.identity_document)
-            else:
-                decrypted_doc = ""
-
-        await db.refresh(application)
-
         try:
             await cache.invalidate_application(str(application_id))
         except Exception as e:
             logger.warning(
                 "Failed to invalidate cache after application update",
-                extra={'error': str(e), 'application_id': str(application_id)}
+                extra={'error': str(e), 'application_id': str(application_id), 'request_id': get_request_id()}
             )
-
+        
         logger.info(
             "Application updated",
-            extra={
-                'application_id': str(application_id),
-                'request_id': get_request_id()
-            }
+            extra={'application_id': str(application_id), 'request_id': get_request_id()}
         )
 
-        return await application_to_response(
-            db,
-            application,
-            decrypted_full_name=decrypted_name,
-            decrypted_identity_document=decrypted_doc
-        )
+        return await application_to_response(db, application)
+        
     except HTTPException:
         raise
+        
     except ValueError as e:
         await safe_rollback(db, e, f"application update - validation error (id: {application_id})")
         logger.warning(
             "Validation error updating application",
-            extra={
-                'application_id': str(application_id),
-                'error': str(e),
-                'request_id': get_request_id()
-            }
+            extra={'application_id': str(application_id), 'error': str(e), 'request_id': get_request_id()}
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
+        
     except Exception as e:
         await safe_rollback(db, e, f"application update - unexpected error (id: {application_id})")
         logger.error(
             "Error updating application",
-            extra={
-                'application_id': str(application_id),
-                'error': str(e),
-                'request_id': get_request_id()
-            },
+            extra={'application_id': str(application_id), 'error': str(e), 'request_id': get_request_id()},
             exc_info=True
         )
         raise HTTPException(

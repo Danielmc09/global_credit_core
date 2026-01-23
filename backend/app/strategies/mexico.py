@@ -1,11 +1,3 @@
-"""Mexico (MX) Country Strategy.
-
-Implements business rules and validations specific to Mexico:
-- Document: CURP (Clave Única de Registro de Población)
-- Income-to-amount relationship rules
-- Mexican banking provider integration (Buró de Crédito)
-"""
-
 import re
 from datetime import date, datetime
 from decimal import Decimal
@@ -60,17 +52,17 @@ class MexicoStrategy(BaseCountryStrategy):
         document = sanitize_string(document).upper().replace(' ', '').replace('-', '')
 
         if len(document) != 18:
-            errors.append(
-                f"CURP must be exactly 18 characters long (received {len(document)})"
+            return ValidationResult(
+                is_valid=False,
+                errors=[f"CURP must be exactly 18 characters long (received {len(document)})"]
             )
-            return ValidationResult(is_valid=False, errors=errors)
 
+        # Validate format
         if not re.match(r'^[A-Z]{4}\d{6}[HM][A-Z]{5}\d{2}$', document):
-            errors.append(
-                "CURP format invalid. Expected format: AAAA######HBBCCCDD "
-                "(e.g., HERM850101MDFRRR01)"
+            return ValidationResult(
+                is_valid=False,
+                errors=["CURP format invalid. Expected format: AAAA######HBBCCCDD (e.g., HERM850101MDFRRR01)"]
             )
-            return ValidationResult(is_valid=False, errors=errors)
 
         date_part = document[4:10]
         try:
@@ -110,16 +102,7 @@ class MexicoStrategy(BaseCountryStrategy):
         if errors:
             return ValidationResult(is_valid=False, errors=errors, warnings=warnings)
 
-        return ValidationResult(
-            is_valid=True,
-            warnings=warnings,
-            metadata={
-                'document_type': 'CURP',
-                'birth_date': date_part,
-                'gender': 'Male' if gender == 'H' else 'Female',
-                'state_code': state_code
-            }
-        )
+        return ValidationResult(is_valid=True, warnings=warnings)
 
     def apply_business_rules(
         self,
@@ -141,27 +124,94 @@ class MexicoStrategy(BaseCountryStrategy):
         requires_review = False
         risk_points = RiskScore.MIN_SCORE
 
+        # Check 1: Maximum loan amount (hard limit)
+        max_amount_result = self._check_max_loan_amount(requested_amount)
+        if max_amount_result:
+            return max_amount_result
+
+        # Check 2: Minimum monthly income
+        risk_points = self._check_minimum_income(monthly_income, reasons, risk_points)
+
+        # Check 3: Loan-to-income ratio
+        risk_points, requires_review = self._check_loan_to_income_ratio(
+            requested_amount, monthly_income, reasons, risk_points, requires_review
+        )
+
+        # Check 4: Payment-to-income ratio
+        risk_points = self._check_payment_ratio(
+            requested_amount, monthly_income, reasons, risk_points
+        )
+
+        # Check 5: Total debt-to-income ratio
+        risk_points = self._check_total_debt_to_income(
+            requested_amount, monthly_income, banking_data, reasons, risk_points
+        )
+
+        # Check 6: Credit score
+        risk_points = self._check_credit_score(
+            banking_data, reasons, risk_points
+        )
+
+        # Check 7: Active defaults
+        risk_points, requires_review = self._check_defaults(
+            banking_data, reasons, risk_points, requires_review
+        )
+
+        # Determine final risk level and recommendation
+        risk_score, risk_level, recommendation = self._determine_risk_level(
+            risk_points, requires_review
+        )
+
+        return RiskAssessment(
+            risk_score=risk_score,
+            risk_level=risk_level,
+            approval_recommendation=recommendation,
+            reasons=reasons if reasons else ['Standard credit profile'],
+            requires_review=requires_review
+        )
+
+    def _check_max_loan_amount(self, requested_amount: Decimal) -> RiskAssessment | None:
+        """Check if requested amount exceeds maximum allowed.
+        
+        Returns RiskAssessment with rejection if exceeded, None otherwise.
+        """
         if requested_amount > self.MAX_LOAN_AMOUNT:
-            reasons.append(
-                f"Requested amount (${requested_amount:,.2f} MXN) exceeds maximum "
-                f"allowed (${self.MAX_LOAN_AMOUNT:,.2f} MXN)"
-            )
-            risk_points += RiskScore.MAX_SCORE
             return RiskAssessment(
                 risk_score=RiskScore.MAX_SCORE,
                 risk_level=RiskLevel.CRITICAL,
                 approval_recommendation=ApprovalRecommendation.REJECT,
-                reasons=reasons,
+                reasons=[
+                    f"Requested amount (${requested_amount:,.2f} MXN) exceeds maximum "
+                    f"allowed (${self.MAX_LOAN_AMOUNT:,.2f} MXN)"
+                ],
                 requires_review=False
             )
+        return None
 
+    def _check_minimum_income(
+        self,
+        monthly_income: Decimal,
+        reasons: list,
+        risk_points: int
+    ) -> int:
+        """Check if monthly income meets minimum requirement."""
         if monthly_income < self.MIN_MONTHLY_INCOME:
             reasons.append(
                 f"Monthly income below minimum: ${monthly_income:,.2f} MXN "
                 f"(min ${self.MIN_MONTHLY_INCOME:,.2f} MXN)"
             )
             risk_points += BusinessRules.RISK_SCORE_PENALTY_LOW_INCOME_MEXICO
+        return risk_points
 
+    def _check_loan_to_income_ratio(
+        self,
+        requested_amount: Decimal,
+        monthly_income: Decimal,
+        reasons: list,
+        risk_points: int,
+        requires_review: bool
+    ) -> tuple[int, bool]:
+        """Check loan-to-income ratio (max 3x annual income)."""
         annual_income = monthly_income * BusinessRules.MONTHS_PER_YEAR_DECIMAL
         max_allowed_loan = annual_income * self.MAX_LOAN_TO_INCOME_MULTIPLE
 
@@ -173,6 +223,16 @@ class MexicoStrategy(BaseCountryStrategy):
             risk_points += BusinessRules.RISK_SCORE_PENALTY_LOAN_TO_INCOME_MEXICO
             requires_review = True
 
+        return risk_points, requires_review
+
+    def _check_payment_ratio(
+        self,
+        requested_amount: Decimal,
+        monthly_income: Decimal,
+        reasons: list,
+        risk_points: int
+    ) -> int:
+        """Check payment-to-income ratio (max 30%)."""
         payment_ratio = self.calculate_payment_to_income_ratio(
             requested_amount,
             monthly_income,
@@ -189,6 +249,17 @@ class MexicoStrategy(BaseCountryStrategy):
             reasons.append("Monthly payment is comfortably within income")
             risk_points -= BusinessRules.RISK_SCORE_ADJUSTMENT_LOW_PAYMENT_RATIO
 
+        return risk_points
+
+    def _check_total_debt_to_income(
+        self,
+        requested_amount: Decimal,
+        monthly_income: Decimal,
+        banking_data: BankingData,
+        reasons: list,
+        risk_points: int
+    ) -> int:
+        """Check total debt-to-income ratio including new loan."""
         if banking_data.monthly_obligations:
             new_monthly_payment = requested_amount / BusinessRules.DEFAULT_LOAN_TERM_MONTHS_DECIMAL
             total_monthly_debt = banking_data.monthly_obligations + new_monthly_payment
@@ -205,6 +276,15 @@ class MexicoStrategy(BaseCountryStrategy):
                 )
                 risk_points += BusinessRules.RISK_SCORE_PENALTY_HIGH_DTI_MEXICO
 
+        return risk_points
+
+    def _check_credit_score(
+        self,
+        banking_data: BankingData,
+        reasons: list,
+        risk_points: int
+    ) -> int:
+        """Check credit score and adjust risk points."""
         if banking_data.credit_score:
             if banking_data.credit_score < 550:
                 reasons.append(
@@ -215,11 +295,33 @@ class MexicoStrategy(BaseCountryStrategy):
                 reasons.append("Good credit score")
                 risk_points -= BusinessRules.RISK_SCORE_ADJUSTMENT_GOOD_CREDIT
 
+        return risk_points
+
+    def _check_defaults(
+        self,
+        banking_data: BankingData,
+        reasons: list,
+        risk_points: int,
+        requires_review: bool
+    ) -> tuple[int, bool]:
+        """Check for active defaults in Buró de Crédito."""
         if banking_data.has_defaults:
             reasons.append("Has active defaults or late payments in Buró de Crédito")
             risk_points += BusinessRules.RISK_SCORE_PENALTY_DEFAULTS_MEXICO
             requires_review = True
 
+        return risk_points, requires_review
+
+    def _determine_risk_level(
+        self,
+        risk_points: int,
+        requires_review: bool
+    ) -> tuple[int, str, str]:
+        """Determine final risk level and approval recommendation.
+        
+        Returns:
+            Tuple of (risk_score, risk_level, recommendation)
+        """
         risk_score = min(RiskScore.MAX_SCORE, max(RiskScore.MIN_SCORE, risk_points))
 
         if risk_score >= RiskScore.CRITICAL_THRESHOLD:
@@ -228,7 +330,6 @@ class MexicoStrategy(BaseCountryStrategy):
         elif risk_score >= RiskScore.HIGH_THRESHOLD:
             risk_level = RiskLevel.HIGH
             recommendation = ApprovalRecommendation.REVIEW
-            requires_review = True
         elif risk_score >= RiskScore.MEDIUM_THRESHOLD:
             risk_level = RiskLevel.MEDIUM
             recommendation = ApprovalRecommendation.REVIEW if requires_review else ApprovalRecommendation.APPROVE
@@ -236,13 +337,8 @@ class MexicoStrategy(BaseCountryStrategy):
             risk_level = RiskLevel.LOW
             recommendation = ApprovalRecommendation.APPROVE
 
-        return RiskAssessment(
-            risk_score=risk_score,
-            risk_level=risk_level,
-            approval_recommendation=recommendation,
-            reasons=reasons if reasons else ['Standard credit profile'],
-            requires_review=requires_review
-        )
+        return risk_score, risk_level, recommendation
+
 
     def get_document_type_name(self) -> str:
         return "CURP"

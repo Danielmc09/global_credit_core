@@ -6,7 +6,7 @@ Exposes application metrics in Prometheus format.
 from fastapi import APIRouter, Response
 
 from app.core.constants import Metrics
-from app.core.metrics import get_content_type, get_metrics
+from app.infrastructure.monitoring.metrics import get_content_type, get_metrics
 
 router = APIRouter()
 

@@ -1,11 +1,3 @@
-"""Spain (ES) Country Strategy.
-
-Implements business rules and validations specific to Spain:
-- Document: DNI (Documento Nacional de Identidad)
-- High amount threshold requiring additional review
-- Spanish banking provider integration
-"""
-
 import re
 from decimal import Decimal
 from typing import Any
@@ -39,6 +31,7 @@ class SpainStrategy(BaseCountryStrategy):
             banking_provider=banking_provider
         )
 
+
     def validate_identity_document(self, document: str) -> ValidationResult:
         """Validate Spanish DNI (Documento Nacional de Identidad).
 
@@ -47,24 +40,13 @@ class SpainStrategy(BaseCountryStrategy):
 
         The letter is calculated using modulo 23 of the number.
         """
-        errors = []
-
-        original_doc = sanitize_string(document).upper()
-        if '-' in original_doc:
-            if not re.match(r'^\d{8}-[A-Z]$', original_doc):
-                errors.append(
-                    "DNI format invalid. Hyphen must be between 8 digits and letter (e.g., 12345678-Z), "
-                    "or use no hyphen (e.g., 12345678Z)"
-                )
-                return ValidationResult(is_valid=False, errors=errors)
-
-        document = original_doc.replace(' ', '').replace('-', '')
+        document = sanitize_string(document).upper().replace(' ', '').replace('-', '')
 
         if not re.match(r'^\d{8}[A-Z]$', document):
-            errors.append(
-                "DNI format invalid. Must be 8 digits followed by a letter (e.g., 12345678Z)"
+            return ValidationResult(
+                is_valid=False,
+                errors=["DNI format invalid. Must be 8 digits followed by a letter (e.g., 12345678Z)"]
             )
-            return ValidationResult(is_valid=False, errors=errors)
 
         number_part = int(document[:8])
         letter_part = document[8]
@@ -73,19 +55,13 @@ class SpainStrategy(BaseCountryStrategy):
         expected_letter = dni_letters[number_part % 23]
 
         if letter_part != expected_letter:
-            errors.append(
-                f"DNI checksum invalid. Expected letter '{expected_letter}' but got '{letter_part}'"
+            return ValidationResult(
+                is_valid=False,
+                errors=[f"DNI checksum invalid. Expected letter '{expected_letter}' but got '{letter_part}'"]
             )
-            return ValidationResult(is_valid=False, errors=errors)
 
-        return ValidationResult(
-            is_valid=True,
-            metadata={
-                'document_type': 'DNI',
-                'document_number': number_part,
-                'checksum_letter': letter_part
-            }
-        )
+        return ValidationResult(is_valid=True)
+
 
     def apply_business_rules(
         self,
@@ -107,20 +83,77 @@ class SpainStrategy(BaseCountryStrategy):
         requires_review = False
         risk_points = RiskScore.MIN_SCORE
 
+        # Check 1: Maximum loan amount (hard limit)
+        max_amount_result = self._check_max_loan_amount(requested_amount)
+        if max_amount_result:
+            return max_amount_result
+
+        # Check 2: High amount threshold
+        risk_points, requires_review = self._check_high_amount_threshold(
+            requested_amount, reasons, risk_points, requires_review
+        )
+
+        # Check 3: Debt-to-income ratio
+        risk_points = self._check_debt_to_income(
+            monthly_income, banking_data, reasons, risk_points
+        )
+
+        # Check 4: Credit score
+        risk_points = self._check_credit_score(
+            banking_data, reasons, risk_points
+        )
+
+        # Check 5: Active defaults
+        risk_points, requires_review = self._check_defaults(
+            banking_data, reasons, risk_points, requires_review
+        )
+
+        # Check 6: Payment-to-income ratio
+        risk_points = self._check_payment_ratio(
+            requested_amount, monthly_income, reasons, risk_points
+        )
+
+        # Determine final risk level and recommendation
+        risk_score, risk_level, recommendation = self._determine_risk_level(
+            risk_points, requires_review
+        )
+
+        return RiskAssessment(
+            risk_score=risk_score,
+            risk_level=risk_level,
+            approval_recommendation=recommendation,
+            reasons=reasons if reasons else ['Standard credit profile'],
+            requires_review=requires_review
+        )
+
+
+    def _check_max_loan_amount(self, requested_amount: Decimal) -> RiskAssessment | None:
+        """Check if requested amount exceeds maximum allowed.
+        
+        Returns RiskAssessment with rejection if exceeded, None otherwise.
+        """
         if requested_amount > self.MAX_LOAN_AMOUNT:
-            reasons.append(
-                f"Requested amount (€{requested_amount:,.2f}) exceeds maximum "
-                f"allowed (€{self.MAX_LOAN_AMOUNT:,.2f})"
-            )
-            risk_points += RiskScore.MAX_SCORE
             return RiskAssessment(
                 risk_score=RiskScore.MAX_SCORE,
                 risk_level=RiskLevel.CRITICAL,
                 approval_recommendation=ApprovalRecommendation.REJECT,
-                reasons=reasons,
+                reasons=[
+                    f"Requested amount (€{requested_amount:,.2f}) exceeds maximum "
+                    f"allowed (€{self.MAX_LOAN_AMOUNT:,.2f})"
+                ],
                 requires_review=False
             )
+        return None
 
+
+    def _check_high_amount_threshold(
+        self,
+        requested_amount: Decimal,
+        reasons: list,
+        risk_points: int,
+        requires_review: bool
+    ) -> tuple[int, bool]:
+        """Check if amount exceeds high threshold requiring review."""
         if requested_amount > self.HIGH_AMOUNT_THRESHOLD:
             requires_review = True
             reasons.append(
@@ -128,7 +161,17 @@ class SpainStrategy(BaseCountryStrategy):
                 f"- requires additional review"
             )
             risk_points += BusinessRules.RISK_SCORE_PENALTY_HIGH_AMOUNT_THRESHOLD
+        return risk_points, requires_review
 
+
+    def _check_debt_to_income(
+        self,
+        monthly_income: Decimal,
+        banking_data: BankingData,
+        reasons: list,
+        risk_points: int
+    ) -> int:
+        """Check debt-to-income ratio."""
         if banking_data.monthly_obligations:
             current_dti = self.calculate_debt_to_income_ratio(
                 monthly_income,
@@ -141,7 +184,16 @@ class SpainStrategy(BaseCountryStrategy):
                     f"(max {self.MAX_DEBT_TO_INCOME_RATIO}%)"
                 )
                 risk_points += BusinessRules.RISK_SCORE_PENALTY_HIGH_DTI_SPAIN
+        return risk_points
 
+
+    def _check_credit_score(
+        self,
+        banking_data: BankingData,
+        reasons: list,
+        risk_points: int
+    ) -> int:
+        """Check credit score and adjust risk points."""
         if banking_data.credit_score:
             if banking_data.credit_score < self.MIN_CREDIT_SCORE:
                 reasons.append(
@@ -152,12 +204,32 @@ class SpainStrategy(BaseCountryStrategy):
             elif banking_data.credit_score >= CreditScore.HIGH_SCORE_THRESHOLD:
                 reasons.append("Excellent credit score")
                 risk_points -= BusinessRules.RISK_SCORE_ADJUSTMENT_GOOD_ACCOUNT_AGE
+        return risk_points
 
+
+    def _check_defaults(
+        self,
+        banking_data: BankingData,
+        reasons: list,
+        risk_points: int,
+        requires_review: bool
+    ) -> tuple[int, bool]:
+        """Check for active defaults."""
         if banking_data.has_defaults:
             reasons.append("Has active defaults in credit bureau")
             risk_points += BusinessRules.RISK_SCORE_PENALTY_DEFAULTS_SPAIN
             requires_review = True
+        return risk_points, requires_review
 
+
+    def _check_payment_ratio(
+        self,
+        requested_amount: Decimal,
+        monthly_income: Decimal,
+        reasons: list,
+        risk_points: int
+    ) -> int:
+        """Check payment-to-income ratio."""
         payment_ratio = self.calculate_payment_to_income_ratio(
             requested_amount,
             monthly_income
@@ -169,7 +241,19 @@ class SpainStrategy(BaseCountryStrategy):
                 f"(concerning if >{RiskScore.MAX_PAYMENT_RATIO_PERCENT}%)"
             )
             risk_points += BusinessRules.RISK_SCORE_PENALTY_HIGH_DEBT
+        return risk_points
 
+
+    def _determine_risk_level(
+        self,
+        risk_points: int,
+        requires_review: bool
+    ) -> tuple[int, str, str]:
+        """Determine final risk level and approval recommendation.
+        
+        Returns:
+            Tuple of (risk_score, risk_level, recommendation)
+        """
         risk_score = min(RiskScore.MAX_SCORE, max(RiskScore.MIN_SCORE, risk_points))
 
         if risk_score >= RiskScore.CRITICAL_THRESHOLD:
@@ -178,7 +262,6 @@ class SpainStrategy(BaseCountryStrategy):
         elif risk_score >= RiskScore.HIGH_THRESHOLD:
             risk_level = RiskLevel.HIGH
             recommendation = ApprovalRecommendation.REVIEW
-            requires_review = True
         elif risk_score >= RiskScore.MEDIUM_THRESHOLD:
             risk_level = RiskLevel.MEDIUM
             recommendation = ApprovalRecommendation.REVIEW if requires_review else ApprovalRecommendation.APPROVE
@@ -186,16 +269,13 @@ class SpainStrategy(BaseCountryStrategy):
             risk_level = RiskLevel.LOW
             recommendation = ApprovalRecommendation.APPROVE
 
-        return RiskAssessment(
-            risk_score=risk_score,
-            risk_level=risk_level,
-            approval_recommendation=recommendation,
-            reasons=reasons if reasons else ['Standard credit profile'],
-            requires_review=requires_review
-        )
+        return risk_score, risk_level, recommendation
+
+
 
     def get_document_type_name(self) -> str:
         return "DNI"
+
 
     def get_required_fields(self) -> list:
         return super().get_required_fields()

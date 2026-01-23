@@ -33,6 +33,7 @@ class BankingProvider(ABC):
         self.provider_name = provider_name
         self.country_code = country_code
 
+
     @abstractmethod
     async def fetch_banking_data(
         self,
@@ -61,9 +62,11 @@ class BankingProvider(ABC):
         """
         pass
 
+
     def get_provider_name(self) -> str:
         """Get the provider name."""
         return self.provider_name
+
 
     def get_country_code(self) -> str:
         """Get the country code this provider serves."""

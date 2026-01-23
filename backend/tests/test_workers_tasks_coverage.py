@@ -6,12 +6,11 @@ Tests for worker task error handling and edge cases.
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from app.workers.tasks import (
-    process_credit_application,
-    send_webhook_notification,
+from app.workers.tasks import process_credit_application
+from app.workers.notifications import send_webhook_notification
+from app.workers.cleanup import (
     cleanup_old_webhook_events,
     cleanup_old_applications,
-    monitor_table_partitioning,
 )
 from app.core.exceptions import (
     StateTransitionError,
@@ -359,54 +358,4 @@ class TestWorkersTasksCoverage:
         result = await cleanup_old_applications(ctx={})
         assert result == "Cleanup completed"
 
-    @pytest.mark.asyncio
-    async def test_monitor_table_partitioning_success(self, test_db, monkeypatch):
-        """Test monitor_table_partitioning task successfully"""
-        with patch('app.workers.tasks.monitor_and_partition_tables') as mock_monitor:
-            mock_monitor.return_value = {
-                'tables_checked': 3,
-                'tables_partitioned': 1,
-                'tables_already_partitioned': 1,
-                'tables_below_threshold': 1,
-                'errors': []
-            }
-            
-            result = await monitor_table_partitioning(ctx={})
-            
-            assert result['status'] == 'completed'
-            assert result['summary']['tables_checked'] == 3
 
-    @pytest.mark.asyncio
-    async def test_monitor_table_partitioning_with_errors(self, test_db, monkeypatch):
-        """Test monitor_table_partitioning with errors"""
-        with patch('app.workers.tasks.monitor_and_partition_tables') as mock_monitor:
-            mock_monitor.return_value = {
-                'tables_checked': 3,
-                'tables_partitioned': 0,
-                'tables_already_partitioned': 0,
-                'tables_below_threshold': 0,
-                'errors': ['Error 1', 'Error 2']
-            }
-            
-            result = await monitor_table_partitioning(ctx={})
-            
-            assert result['status'] == 'completed'
-            assert len(result['summary']['errors']) == 2
-
-    @pytest.mark.asyncio
-    async def test_monitor_table_partitioning_database_error(self, test_db, monkeypatch):
-        """Test monitor_table_partitioning with database error"""
-        with patch('app.workers.tasks.monitor_and_partition_tables') as mock_monitor:
-            mock_monitor.side_effect = OperationalError("Connection lost", None, None)
-            
-            with pytest.raises(DatabaseConnectionError):
-                await monitor_table_partitioning(ctx={})
-
-    @pytest.mark.asyncio
-    async def test_monitor_table_partitioning_unexpected_error(self, test_db, monkeypatch):
-        """Test monitor_table_partitioning with unexpected error"""
-        with patch('app.workers.tasks.monitor_and_partition_tables') as mock_monitor:
-            mock_monitor.side_effect = RuntimeError("Unexpected error")
-            
-            with pytest.raises(RuntimeError):
-                await monitor_table_partitioning(ctx={})

@@ -6,7 +6,7 @@ This makes it easy to extend to new countries without modifying existing code.
 
 from typing import Optional
 
-from ..core.constants import CountryCode, ErrorMessages
+from ..core.constants import CountryCode, ErrorMessages, CountryBusinessRules
 from ..providers import BankingProvider, MockBankingProvider
 from .base import BaseCountryStrategy
 from .brazil import BrazilStrategy
@@ -15,6 +15,7 @@ from .italy import ItalyStrategy
 from .mexico import MexicoStrategy
 from .portugal import PortugalStrategy
 from .spain import SpainStrategy
+from .argentina import AregtinaStrategy
 
 
 class CountryStrategyFactory:
@@ -32,6 +33,7 @@ class CountryStrategyFactory:
         CountryCode.MEXICO: MexicoStrategy,     # Mexico - CURP
         CountryCode.COLOMBIA: ColombiaStrategy,   # Colombia - Cédula
         CountryCode.BRAZIL: BrazilStrategy,     # Brazil - CPF
+        CountryCode.ARGENTINA: AregtinaStrategy,
     }
 
     @classmethod
@@ -115,7 +117,6 @@ class CountryStrategyFactory:
         cls._strategies[country_code.upper()] = strategy_class
 
 
-# Convenience function for common use case
 def get_country_strategy(
     country_code: str,
     banking_provider: Optional[BankingProvider] = None

@@ -13,7 +13,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.constants import Pagination
-from ..core.encryption import decrypt_value, encrypt_for_query, encrypt_value
+from ..infrastructure.security import decrypt_value
 from ..models.application import Application, ApplicationStatus, AuditLog
 
 
@@ -62,6 +62,7 @@ class ApplicationRepository:
 
         return application
 
+
     async def find_by_idempotency_key(
         self,
         idempotency_key: str,
@@ -90,6 +91,7 @@ class ApplicationRepository:
 
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
+
 
     async def find_active_by_document_and_country(
         self,
@@ -124,6 +126,7 @@ class ApplicationRepository:
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
+
     async def create(self, application: Application) -> Application:
         """Create a new application.
 
@@ -136,6 +139,7 @@ class ApplicationRepository:
         self.db.add(application)
         await self.db.flush()
         return application
+
 
     async def update(self, application: Application) -> Application:
         """Update an existing application.
@@ -150,6 +154,7 @@ class ApplicationRepository:
         await self.db.refresh(application)
         return application
 
+
     async def soft_delete(self, application: Application) -> None:
         """Soft delete an application.
 
@@ -159,6 +164,7 @@ class ApplicationRepository:
         from datetime import UTC, datetime
         application.deleted_at = datetime.now(UTC)
         await self.db.flush()
+
 
     async def list(
         self,
@@ -214,6 +220,7 @@ class ApplicationRepository:
 
         return list(applications), total
 
+
     async def get_statistics_by_country(self, country: str) -> dict[str, Any]:
         """Get application statistics for a country.
 
@@ -256,6 +263,7 @@ class ApplicationRepository:
             'approved_count': row.approved or 0,
             'rejected_count': row.rejected or 0
         }
+
 
     async def get_audit_logs(
         self,

@@ -1,14 +1,3 @@
-"""Brazil (BR) Credit Application Strategy.
-
-Document: CPF (Cadastro de Pessoas Físicas)
-Format: 11 digits (XXX.XXX.XXX-XX)
-Business Rules:
-- Minimum income: R$ 2,000
-- Maximum loan amount: R$ 100,000
-- Loan-to-income ratio: <= 5x annual income
-- Debt-to-income ratio: <= 35%
-- Minimum credit score: 550
-"""
 import re
 from decimal import Decimal
 from typing import Any
@@ -126,6 +115,61 @@ class BrazilStrategy(BaseCountryStrategy):
         risk_score = Decimal("0.0")
         decision = ApprovalRecommendation.APPROVE
 
+        # Check 1: Minimum income
+        risk_score, decision = self._check_minimum_income(
+            monthly_income, validation_errors, risk_score, decision
+        )
+
+        # Check 2: Maximum loan amount
+        risk_score, decision = self._check_max_loan_amount(
+            requested_amount, validation_errors, risk_score, decision
+        )
+
+        # Check 3: Loan-to-income ratio
+        risk_score, decision = self._check_loan_to_income_ratio(
+            requested_amount, monthly_income, validation_errors, risk_score, decision
+        )
+
+        # Check 4: Debt-to-income ratio
+        risk_score, decision = self._check_debt_to_income_ratio(
+            requested_amount, monthly_income, banking_data, validation_errors, risk_score, decision
+        )
+
+        # Check 5: Credit score
+        risk_score, decision = self._check_credit_score(
+            banking_data, validation_errors, risk_score, decision
+        )
+
+        # Check 6: Active defaults
+        risk_score, decision = self._check_defaults(
+            banking_data, validation_errors, risk_score, decision
+        )
+
+        # Apply positive adjustments
+        risk_score = self._apply_positive_adjustments(banking_data, risk_score)
+
+        # Finalize risk score and determine level
+        risk_score, risk_level, decision = self._finalize_risk_assessment(
+            validation_errors, risk_score, decision
+        )
+
+        return RiskAssessment(
+            risk_score=risk_score,
+            risk_level=risk_level,
+            approval_recommendation=decision,
+            reasons=validation_errors if validation_errors else ['Standard credit profile'],
+            requires_review=(decision == ApprovalRecommendation.REVIEW)
+        )
+
+
+    def _check_minimum_income(
+        self,
+        monthly_income: Decimal,
+        validation_errors: list,
+        risk_score: Decimal,
+        decision: str
+    ) -> tuple[Decimal, str]:
+        """Check if monthly income meets minimum requirement (R$ 2,000)."""
         if monthly_income < self.MINIMUM_INCOME:
             validation_errors.append(
                 f"Monthly income (R$ {monthly_income:.2f}) below minimum "
@@ -133,7 +177,17 @@ class BrazilStrategy(BaseCountryStrategy):
             )
             risk_score += BusinessRules.RISK_SCORE_PENALTY_LOW_INCOME
             decision = ApprovalRecommendation.REJECT
+        return risk_score, decision
 
+
+    def _check_max_loan_amount(
+        self,
+        requested_amount: Decimal,
+        validation_errors: list,
+        risk_score: Decimal,
+        decision: str
+    ) -> tuple[Decimal, str]:
+        """Check if requested amount exceeds maximum allowed (R$ 100,000)."""
         if requested_amount > self.MAXIMUM_LOAN_AMOUNT:
             validation_errors.append(
                 f"Requested amount (R$ {requested_amount:.2f}) exceeds maximum "
@@ -141,8 +195,20 @@ class BrazilStrategy(BaseCountryStrategy):
             )
             risk_score += BusinessRules.RISK_SCORE_PENALTY_HIGH_DEBT
             decision = ApprovalRecommendation.REJECT
+        return risk_score, decision
 
+
+    def _check_loan_to_income_ratio(
+        self,
+        requested_amount: Decimal,
+        monthly_income: Decimal,
+        validation_errors: list,
+        risk_score: Decimal,
+        decision: str
+    ) -> tuple[Decimal, str]:
+        """Check loan-to-income ratio (max 5x annual income)."""
         annual_income = monthly_income * BusinessRules.MONTHS_PER_YEAR_DECIMAL
+        
         if annual_income <= 0 or abs(annual_income) < Decimal('0.01'):
             loan_to_income_ratio = RiskScore.MAX_SCORE
         else:
@@ -156,9 +222,23 @@ class BrazilStrategy(BaseCountryStrategy):
             risk_score += BusinessRules.RISK_SCORE_PENALTY_HIGH_AMOUNT
             decision = ApprovalRecommendation.REJECT
 
+        return risk_score, decision
+
+
+    def _check_debt_to_income_ratio(
+        self,
+        requested_amount: Decimal,
+        monthly_income: Decimal,
+        banking_data: BankingData,
+        validation_errors: list,
+        risk_score: Decimal,
+        decision: str
+    ) -> tuple[Decimal, str]:
+        """Check debt-to-income ratio (max 35%)."""
         if banking_data.monthly_obligations:
             new_monthly_payment = requested_amount / BusinessRules.DEFAULT_LOAN_TERM_MONTHS_COLOMBIA
             total_obligations = banking_data.monthly_obligations + new_monthly_payment
+            
             if monthly_income <= 0 or abs(monthly_income) < Decimal('0.01'):
                 debt_to_income = Decimal("100.0")
             else:
@@ -173,6 +253,17 @@ class BrazilStrategy(BaseCountryStrategy):
                 if decision == ApprovalRecommendation.APPROVE:
                     decision = ApprovalRecommendation.REVIEW
 
+        return risk_score, decision
+
+
+    def _check_credit_score(
+        self,
+        banking_data: BankingData,
+        validation_errors: list,
+        risk_score: Decimal,
+        decision: str
+    ) -> tuple[Decimal, str]:
+        """Check credit score (minimum 550)."""
         if banking_data.credit_score and banking_data.credit_score < self.MIN_CREDIT_SCORE:
             validation_errors.append(
                 f"Credit score ({banking_data.credit_score}) below minimum "
@@ -180,19 +271,53 @@ class BrazilStrategy(BaseCountryStrategy):
             )
             risk_score += BusinessRules.RISK_SCORE_PENALTY_HIGH_AMOUNT
             decision = ApprovalRecommendation.REJECT
+        return risk_score, decision
 
+
+    def _check_defaults(
+        self,
+        banking_data: BankingData,
+        validation_errors: list,
+        risk_score: Decimal,
+        decision: str
+    ) -> tuple[Decimal, str]:
+        """Check for active defaults."""
         if banking_data.has_defaults:
             validation_errors.append("Applicant has active defaults")
             risk_score += BusinessRules.RISK_SCORE_PENALTY_LOW_INCOME
             decision = ApprovalRecommendation.REJECT
+        return risk_score, decision
 
+
+    def _apply_positive_adjustments(
+        self,
+        banking_data: BankingData,
+        risk_score: Decimal
+    ) -> Decimal:
+        """Apply positive adjustments for good credit score and account age."""
+        # Good credit score bonus
         if banking_data.credit_score and banking_data.credit_score >= CreditScore.GOOD_SCORE_THRESHOLD:
             risk_score = max(RiskScore.MIN_SCORE, risk_score - BusinessRules.RISK_SCORE_ADJUSTMENT_GOOD_CREDIT)
 
+        # Good account age bonus
         account_age_months = banking_data.additional_data.get("account_age_months")
         if account_age_months and account_age_months >= BusinessRules.MIN_ACCOUNT_AGE_MONTHS_BRAZIL:
             risk_score = max(RiskScore.MIN_SCORE, risk_score - BusinessRules.RISK_SCORE_ADJUSTMENT_ACCOUNT_AGE_BRAZIL)
 
+        return risk_score
+
+
+    def _finalize_risk_assessment(
+        self,
+        validation_errors: list,
+        risk_score: Decimal,
+        decision: str
+    ) -> tuple[Decimal, str, str]:
+        """Finalize risk score and determine risk level.
+        
+        Returns:
+            Tuple of (risk_score, risk_level, decision)
+        """
         risk_score = min(RiskScore.MAX_SCORE, risk_score)
 
         if not validation_errors:
@@ -208,10 +333,5 @@ class BrazilStrategy(BaseCountryStrategy):
         else:
             risk_level = RiskLevel.LOW
 
-        return RiskAssessment(
-            risk_score=risk_score,
-            risk_level=risk_level,
-            approval_recommendation=decision,
-            reasons=validation_errors if validation_errors else ['Standard credit profile'],
-            requires_review=(decision == ApprovalRecommendation.REVIEW)
-        )
+        return risk_score, risk_level, decision
+

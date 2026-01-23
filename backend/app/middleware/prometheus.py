@@ -9,7 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 from ..core.constants import HttpStatusCodes
-from ..core.metrics import (
+from ..infrastructure.monitoring import (
     http_request_duration_seconds,
     http_requests_in_progress,
     http_requests_total,

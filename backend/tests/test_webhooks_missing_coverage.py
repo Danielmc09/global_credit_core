@@ -21,7 +21,7 @@ def mock_background_tasks():
     This fixture patches the functions where they are imported/used in the endpoints,
     which is the most reliable way to ensure the mocks work.
     """
-    with patch('app.api.v1.endpoints.applications.enqueue_application_processing', new_callable=AsyncMock) as mock_enqueue:
+    with patch('app.workers.tasks.enqueue_application_processing', new_callable=AsyncMock) as mock_enqueue:
         with patch('app.api.v1.endpoints.webhooks.broadcast_application_update', new_callable=AsyncMock) as mock_broadcast:
             yield {
                 'enqueue': mock_enqueue,

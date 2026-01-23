@@ -10,7 +10,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./backend/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./backend/migrations:/migrations
+      - ./backend/migrations/init.sql:/docker-entrypoint-initdb.d/00_init.sql
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-credit_user} -d ${POSTGRES_DB:-credit_db}" ]
       interval: 10s

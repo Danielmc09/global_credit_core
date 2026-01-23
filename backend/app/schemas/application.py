@@ -19,7 +19,7 @@ from ..core.constants import (
     RiskScore,
     ValidationLimits,
 )
-from ..core.country_limits import get_max_loan_amount, get_min_monthly_income
+from ..domain.business_rules import get_max_loan_amount, get_min_monthly_income
 from ..models.application import ApplicationStatus, CountryCode
 from ..utils import mask_document, sanitize_string
 
@@ -66,6 +66,7 @@ class ApplicationCreate(ApplicationBase):
                     "If provided and an application with this key exists, the existing application will be returned."
     )
 
+
     @validator('identity_document')
     def validate_document_not_empty(cls, v):
         """Validate and sanitize identity document."""
@@ -73,6 +74,7 @@ class ApplicationCreate(ApplicationBase):
         if not sanitized:
             raise ValueError(ErrorMessages.DOCUMENT_EMPTY)
         return sanitized
+
 
     @validator('full_name')
     def validate_name(cls, v):
@@ -84,6 +86,7 @@ class ApplicationCreate(ApplicationBase):
         if len(parts) < ValidationLimits.MIN_NAME_PARTS:
             raise ValueError(ErrorMessages.NAME_INVALID)
         return sanitized
+
 
     @root_validator(skip_on_failure=True)
     def validate_all_country_specific_rules(cls, values):

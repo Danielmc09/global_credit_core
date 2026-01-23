@@ -1,11 +1,3 @@
-"""Portugal (PT) Country Strategy.
-
-Implements business rules and validations specific to Portugal:
-- Document: NIF (Número de Identificação Fiscal)
-- Income-to-amount relationship rules
-- Portuguese banking provider integration
-"""
-
 from decimal import Decimal
 from typing import Any
 
@@ -54,52 +46,49 @@ class PortugalStrategy(BaseCountryStrategy):
         - If result is 0 or 1, checksum is 0
         - Otherwise, checksum is the result
         """
-        errors = []
-
+        # Normalize: remove spaces and hyphens
         document = sanitize_string(document).replace(' ', '').replace('-', '')
 
+        # Validate length
         if len(document) != 9:
-            errors.append(
-                f"NIF must be exactly 9 digits long (received {len(document)})"
+            return ValidationResult(
+                is_valid=False,
+                errors=[f"NIF must be exactly 9 digits long (received {len(document)})"]
             )
-            return ValidationResult(is_valid=False, errors=errors)
 
+        # Validate digits only
         if not document.isdigit():
-            errors.append("NIF must contain only digits")
-            return ValidationResult(is_valid=False, errors=errors)
+            return ValidationResult(
+                is_valid=False,
+                errors=["NIF must contain only digits"]
+            )
 
         try:
+            # Calculate checksum
             first_8 = document[:8]
             checksum_digit = int(document[8])
-
             weights = [9, 8, 7, 6, 5, 4, 3, 2]
-
+            
             weighted_sum = sum(int(first_8[i]) * weights[i] for i in range(8))
-
             remainder = weighted_sum % 11
             calculated_checksum = 11 - remainder
-
+            
             if calculated_checksum >= 10:
                 calculated_checksum = 0
 
             if checksum_digit != calculated_checksum:
-                errors.append(
-                    f"NIF checksum invalid. Expected {calculated_checksum}, got {checksum_digit}"
+                return ValidationResult(
+                    is_valid=False,
+                    errors=[f"NIF checksum invalid. Expected {calculated_checksum}, got {checksum_digit}"]
                 )
-                return ValidationResult(is_valid=False, errors=errors)
 
-            return ValidationResult(
-                is_valid=True,
-                metadata={
-                    'document_type': 'NIF',
-                    'document_number': first_8,
-                    'checksum_digit': checksum_digit
-                }
-            )
+            return ValidationResult(is_valid=True)
 
         except (ValueError, IndexError) as e:
-            errors.append(f"Error validating NIF: {e!s}")
-            return ValidationResult(is_valid=False, errors=errors)
+            return ValidationResult(
+                is_valid=False,
+                errors=[f"Error validating NIF: {e!s}"]
+            )
 
     def apply_business_rules(
         self,
@@ -122,28 +111,99 @@ class PortugalStrategy(BaseCountryStrategy):
         requires_review = False
         risk_points = RiskScore.MIN_SCORE
 
+        # Check 1: Maximum loan amount (hard limit)
+        max_amount_result = self._check_max_loan_amount(requested_amount)
+        if max_amount_result:
+            return max_amount_result
+
+        # Check 2: Minimum monthly income
+        risk_points = self._check_minimum_income(monthly_income, reasons, risk_points)
+
+        # Check 3: Loan-to-income ratio
+        risk_points, requires_review = self._check_loan_to_income_ratio(
+            requested_amount, monthly_income, reasons, risk_points, requires_review
+        )
+
+        # Check 4: Debt-to-income ratio
+        risk_points = self._check_debt_to_income(
+            monthly_income, banking_data, reasons, risk_points
+        )
+
+        # Check 5: Credit score
+        risk_points = self._check_credit_score(
+            banking_data, reasons, risk_points
+        )
+
+        # Check 6: Active defaults
+        risk_points, requires_review = self._check_defaults(
+            banking_data, reasons, risk_points, requires_review
+        )
+
+        # Check 7: Payment-to-income ratio
+        risk_points = self._check_payment_ratio(
+            requested_amount, monthly_income, reasons, risk_points
+        )
+
+        # Determine final risk level and recommendation
+        risk_score, risk_level, recommendation = self._determine_risk_level(
+            risk_points, requires_review
+        )
+
+        return RiskAssessment(
+            risk_score=risk_score,
+            risk_level=risk_level,
+            approval_recommendation=recommendation,
+            reasons=reasons if reasons else ['Standard credit profile'],
+            requires_review=requires_review
+        )
+
+
+    def _check_max_loan_amount(self, requested_amount: Decimal) -> RiskAssessment | None:
+        """Check if requested amount exceeds maximum allowed.
+        
+        Returns RiskAssessment with rejection if exceeded, None otherwise.
+        """
         if requested_amount > self.MAX_LOAN_AMOUNT:
-            reasons.append(
-                f"Requested amount (€{requested_amount:,.2f}) exceeds maximum "
-                f"allowed (€{self.MAX_LOAN_AMOUNT:,.2f})"
-            )
-            risk_points += RiskScore.MAX_SCORE
             return RiskAssessment(
                 risk_score=RiskScore.MAX_SCORE,
                 risk_level=RiskLevel.CRITICAL,
                 approval_recommendation=ApprovalRecommendation.REJECT,
-                reasons=reasons,
+                reasons=[
+                    f"Requested amount (€{requested_amount:,.2f}) exceeds maximum "
+                    f"allowed (€{self.MAX_LOAN_AMOUNT:,.2f})"
+                ],
                 requires_review=False
             )
+        return None
 
+
+    def _check_minimum_income(
+        self,
+        monthly_income: Decimal,
+        reasons: list,
+        risk_points: int
+    ) -> int:
+        """Check if monthly income meets minimum requirement."""
         if monthly_income < self.MIN_MONTHLY_INCOME:
             reasons.append(
                 f"Monthly income (€{monthly_income:,.2f}) below minimum "
                 f"(€{self.MIN_MONTHLY_INCOME:,.2f})"
             )
             risk_points += BusinessRules.RISK_SCORE_PENALTY_LOW_INCOME
+        return risk_points
 
+
+    def _check_loan_to_income_ratio(
+        self,
+        requested_amount: Decimal,
+        monthly_income: Decimal,
+        reasons: list,
+        risk_points: int,
+        requires_review: bool
+    ) -> tuple[int, bool]:
+        """Check loan-to-income ratio (max 4x annual income)."""
         annual_income = monthly_income * BusinessRules.MONTHS_PER_YEAR_DECIMAL
+        
         if annual_income <= 0 or abs(annual_income) < Decimal('0.01'):
             loan_to_income_ratio = RiskScore.MAX_SCORE
         else:
@@ -156,7 +216,18 @@ class PortugalStrategy(BaseCountryStrategy):
             )
             risk_points += BusinessRules.RISK_SCORE_PENALTY_HIGH_AMOUNT
             requires_review = True
+        
+        return risk_points, requires_review
 
+
+    def _check_debt_to_income(
+        self,
+        monthly_income: Decimal,
+        banking_data: BankingData,
+        reasons: list,
+        risk_points: int
+    ) -> int:
+        """Check debt-to-income ratio."""
         if banking_data.monthly_obligations:
             current_dti = self.calculate_debt_to_income_ratio(
                 monthly_income,
@@ -169,7 +240,16 @@ class PortugalStrategy(BaseCountryStrategy):
                     f"(max {self.MAX_DEBT_TO_INCOME_RATIO}%)"
                 )
                 risk_points += BusinessRules.RISK_SCORE_PENALTY_LOW_CREDIT
+        return risk_points
 
+
+    def _check_credit_score(
+        self,
+        banking_data: BankingData,
+        reasons: list,
+        risk_points: int
+    ) -> int:
+        """Check credit score and adjust risk points."""
         if banking_data.credit_score:
             if banking_data.credit_score < self.MIN_CREDIT_SCORE:
                 reasons.append(
@@ -180,12 +260,32 @@ class PortugalStrategy(BaseCountryStrategy):
             elif banking_data.credit_score >= CreditScore.HIGH_SCORE_THRESHOLD:
                 reasons.append("Excellent credit score")
                 risk_points -= BusinessRules.RISK_SCORE_ADJUSTMENT_GOOD_ACCOUNT_AGE
+        return risk_points
 
+
+    def _check_defaults(
+        self,
+        banking_data: BankingData,
+        reasons: list,
+        risk_points: int,
+        requires_review: bool
+    ) -> tuple[int, bool]:
+        """Check for active defaults."""
         if banking_data.has_defaults:
             reasons.append("Has active defaults in credit bureau")
             risk_points += BusinessRules.RISK_SCORE_PENALTY_DEFAULT
             requires_review = True
+        return risk_points, requires_review
 
+
+    def _check_payment_ratio(
+        self,
+        requested_amount: Decimal,
+        monthly_income: Decimal,
+        reasons: list,
+        risk_points: int
+    ) -> int:
+        """Check payment-to-income ratio."""
         payment_ratio = self.calculate_payment_to_income_ratio(
             requested_amount,
             monthly_income
@@ -197,7 +297,19 @@ class PortugalStrategy(BaseCountryStrategy):
                 f"(concerning if >{RiskScore.MAX_PAYMENT_RATIO_PERCENT}%)"
             )
             risk_points += BusinessRules.RISK_SCORE_PENALTY_HIGH_DEBT
+        return risk_points
 
+
+    def _determine_risk_level(
+        self,
+        risk_points: int,
+        requires_review: bool
+    ) -> tuple[int, str, str]:
+        """Determine final risk level and approval recommendation.
+        
+        Returns:
+            Tuple of (risk_score, risk_level, recommendation)
+        """
         risk_score = min(RiskScore.MAX_SCORE, max(RiskScore.MIN_SCORE, risk_points))
 
         if risk_score >= RiskScore.CRITICAL_THRESHOLD:
@@ -206,7 +318,6 @@ class PortugalStrategy(BaseCountryStrategy):
         elif risk_score >= RiskScore.HIGH_THRESHOLD:
             risk_level = RiskLevel.HIGH
             recommendation = ApprovalRecommendation.REVIEW
-            requires_review = True
         elif risk_score >= RiskScore.MEDIUM_THRESHOLD:
             risk_level = RiskLevel.MEDIUM
             recommendation = ApprovalRecommendation.REVIEW if requires_review else ApprovalRecommendation.APPROVE
@@ -214,16 +325,12 @@ class PortugalStrategy(BaseCountryStrategy):
             risk_level = RiskLevel.LOW
             recommendation = ApprovalRecommendation.APPROVE
 
-        return RiskAssessment(
-            risk_score=risk_score,
-            risk_level=risk_level,
-            approval_recommendation=recommendation,
-            reasons=reasons if reasons else ['Standard credit profile'],
-            requires_review=requires_review
-        )
+        return risk_score, risk_level, recommendation
+
 
     def get_document_type_name(self) -> str:
         return "NIF"
+
 
     def get_required_fields(self) -> list:
         return super().get_required_fields()

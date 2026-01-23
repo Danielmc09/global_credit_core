@@ -17,16 +17,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ....core.config import settings
 from ....core.constants import ErrorMessages, SuccessMessages, WebhookPayloadLimits
 from ....core.logging import get_logger
-from ....core.rate_limiting import get_rate_limit_key
-from ....core.webhook_security import verify_webhook_signature
+from ....infrastructure.security import get_rate_limit_key, verify_webhook_signature
 from ....db.database import get_db
 from ....models.application import ApplicationStatus
 from ....models.webhook_event import WebhookEvent, WebhookEventStatus
 from ....schemas.application import SuccessResponse, WebhookBankConfirmation
 from ....services.application_service import ApplicationService
-from ....services.websocket_service import broadcast_application_update
+from ....infrastructure.messaging import publish_application_update
 from ....utils import format_datetime
-from ....utils.helpers import validate_banking_data_precision
+from ....utils import validate_banking_data_precision
 
 logger = get_logger(__name__)
 
@@ -439,13 +438,25 @@ async def bank_confirmation_webhook(
             }
         )
 
-        # Broadcast update via WebSocket
+        # Publish update to Redis (will be broadcast to WebSocket clients)
         try:
-            await broadcast_application_update(application)
+            status_value = application.status.value if hasattr(application.status, 'value') else str(application.status)
+            updated_at_str = (
+                format_datetime(application.updated_at, "%Y-%m-%dT%H:%M:%S")
+                if application.updated_at 
+                else None
+            )
+            
+            await publish_application_update(
+                application_id=str(application.id),
+                status=status_value,
+                risk_score=application.risk_score,
+                updated_at=updated_at_str
+            )
         except Exception as broadcast_error:
-            # Don't fail the webhook if broadcast fails
+            # Don't fail the webhook if publish fails
             logger.warning(
-                "Failed to broadcast application update",
+                "Failed to publish application update to Redis",
                 extra={
                     'error': str(broadcast_error),
                     'application_id': str(application.id)

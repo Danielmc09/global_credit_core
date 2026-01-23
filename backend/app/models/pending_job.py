@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
+from sqlalchemy.dialects.postgresql import ENUM, JSONB, UUID as PGUUID
 from sqlalchemy.orm import relationship
 
 from ..db.database import Base
@@ -70,9 +70,17 @@ class PendingJob(Base):
         comment="Job keyword arguments"
     )
     status = Column(
-        String(50),
+        ENUM(
+            "pending",
+            "enqueued",
+            "processing",
+            "completed",
+            "failed",
+            name="pending_job_status",
+            create_type=False
+        ),
         nullable=False,
-        default=PendingJobStatus.PENDING.value,
+        default=PendingJobStatus.PENDING,
         comment="Job status: pending, enqueued, processing, completed, failed"
     )
     arq_job_id = Column(

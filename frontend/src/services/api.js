@@ -1,6 +1,25 @@
 import axios from 'axios';
 import { API_URL, ENDPOINTS } from '../utils/constants';
 
+/**
+ * Generate a UUID v4 for idempotency keys.
+ * This ensures that retry requests can be safely deduplicated by the backend.
+ * @returns {string} UUID v4 string
+ */
+function generateIdempotencyKey() {
+  // Use crypto.randomUUID() if available (modern browsers)
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+
+  // Fallback: Generate UUID v4 manually
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 const api = axios.create({
   baseURL: API_URL,
   headers: {
@@ -86,7 +105,13 @@ export const applicationAPI = {
 
   // Create new application
   createApplication: async (data) => {
-    const response = await api.post(ENDPOINTS.APPLICATIONS, data);
+    // Generate idempotency key if not provided (UUID v4)
+    const requestData = {
+      ...data,
+      idempotency_key: data.idempotency_key || generateIdempotencyKey(),
+    };
+
+    const response = await api.post(ENDPOINTS.APPLICATIONS, requestData);
     return response.data;
   },
 

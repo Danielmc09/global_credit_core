@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from ....core.config import settings
 from ....core.logging import get_logger
-from ....core.security import create_access_token
+from ....infrastructure.security import create_access_token
 
 logger = get_logger(__name__)
 

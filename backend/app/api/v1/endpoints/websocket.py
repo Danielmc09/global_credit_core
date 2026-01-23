@@ -10,7 +10,7 @@ from ....core.constants import (
     WebSocketMessageTypes,
 )
 from ....core.logging import get_logger
-from ....services.websocket_service import manager
+from ....infrastructure.messaging import websocket_manager as manager
 from ....utils import generate_request_id
 
 logger = get_logger(__name__)
@@ -38,7 +38,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         # Send welcome message
-        await manager.send_personal_message(
+        await manager.send_to_connection(
             {
                 "type": WebSocketMessageTypes.CONNECTION,
                 "status": "connected",
@@ -57,7 +57,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 application_id = data["application_id"]
                 manager.subscribe(connection_id, application_id)
 
-                await manager.send_personal_message(
+                await manager.send_to_connection(
                     {
                         "type": WebSocketMessageTypes.SUBSCRIBED,
                         "application_id": application_id,
@@ -68,7 +68,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # Handle ping/pong for keepalive
             elif data.get("action") == WebSocketActions.PING:
-                await manager.send_personal_message(
+                await manager.send_to_connection(
                     {"type": WebSocketMessageTypes.PONG},
                     connection_id
                 )

@@ -1,11 +1,3 @@
-"""Italy (IT) Country Strategy.
-
-Implements business rules and validations specific to Italy:
-- Document: Codice Fiscale (Tax Code)
-- Financial stability and income rules
-- Italian banking provider integration
-"""
-
 import re
 from decimal import Decimal
 from typing import Any
@@ -65,16 +57,16 @@ class ItalyStrategy(BaseCountryStrategy):
         document = sanitize_string(document).upper().replace(' ', '').replace('-', '')
 
         if len(document) != 16:
-            errors.append(
-                f"Codice Fiscale must be exactly 16 characters long (received {len(document)})"
+            return ValidationResult(
+                is_valid=False,
+                errors=[f"Codice Fiscale must be exactly 16 characters long (received {len(document)})"]
             )
-            return ValidationResult(is_valid=False, errors=errors)
 
         if not re.match(r'^[A-Z0-9]{16}$', document):
-            errors.append(
-                "Codice Fiscale must contain only uppercase letters and numbers"
+            return ValidationResult(
+                is_valid=False,
+                errors=["Codice Fiscale must contain only uppercase letters and numbers"]
             )
-            return ValidationResult(is_valid=False, errors=errors)
 
         if not re.match(r'^[A-Z]{6}', document):
             warnings.append("First 6 characters should typically be letters")
@@ -96,14 +88,8 @@ class ItalyStrategy(BaseCountryStrategy):
         if not document[15].isalpha():
             warnings.append("Check character (last) should be a letter")
 
-        return ValidationResult(
-            is_valid=True,
-            warnings=warnings,
-            metadata={
-                'document_type': 'Codice Fiscale',
-                'document_number': document
-            }
-        )
+        return ValidationResult(is_valid=True, warnings=warnings)
+
 
     def apply_business_rules(
         self,
@@ -126,19 +112,83 @@ class ItalyStrategy(BaseCountryStrategy):
         requires_review = False
         risk_points = RiskScore.MIN_SCORE
 
+        # Check 1: Minimum monthly income
+        risk_points = self._check_minimum_income(monthly_income, reasons, risk_points)
+
+        # Check 2: Maximum loan amount (hard limit)
+        max_amount_result = self._check_max_loan_amount(requested_amount, reasons)
+        if max_amount_result:
+            return max_amount_result
+
+        # Check 3: Debt-to-income ratio
+        risk_points = self._check_debt_to_income(
+            monthly_income, banking_data, reasons, risk_points
+        )
+
+        # Check 4: Credit score
+        risk_points = self._check_credit_score(
+            banking_data, reasons, risk_points
+        )
+
+        # Check 5: Active defaults
+        risk_points, requires_review = self._check_defaults(
+            banking_data, reasons, risk_points, requires_review
+        )
+
+        # Check 6: Payment-to-income ratio
+        risk_points = self._check_payment_ratio(
+            requested_amount, monthly_income, reasons, risk_points
+        )
+
+        # Check 7: Financial stability (income consistency)
+        risk_points, requires_review = self._check_financial_stability(
+            requested_amount, monthly_income, reasons, risk_points, requires_review
+        )
+
+        # Determine final risk level and recommendation
+        risk_score, risk_level, recommendation = self._determine_risk_level(
+            risk_points, requires_review
+        )
+
+        return RiskAssessment(
+            risk_score=risk_score,
+            risk_level=risk_level,
+            approval_recommendation=recommendation,
+            reasons=reasons if reasons else ['Standard credit profile'],
+            requires_review=requires_review
+        )
+
+
+    def _check_minimum_income(
+        self,
+        monthly_income: Decimal,
+        reasons: list,
+        risk_points: int
+    ) -> int:
+        """Check if monthly income meets minimum requirement (€1,200)."""
         if monthly_income < self.MIN_MONTHLY_INCOME:
             reasons.append(
                 f"Monthly income (€{monthly_income:,.2f}) below minimum "
                 f"(€{self.MIN_MONTHLY_INCOME:,.2f})"
             )
             risk_points += BusinessRules.RISK_SCORE_PENALTY_LOW_INCOME
+        return risk_points
 
+
+    def _check_max_loan_amount(
+        self,
+        requested_amount: Decimal,
+        reasons: list
+    ) -> RiskAssessment | None:
+        """Check if requested amount exceeds maximum allowed.
+        
+        Returns RiskAssessment with rejection if exceeded, None otherwise.
+        """
         if requested_amount > self.MAX_LOAN_AMOUNT:
             reasons.append(
                 f"Requested amount (€{requested_amount:,.2f}) exceeds maximum "
                 f"allowed (€{self.MAX_LOAN_AMOUNT:,.2f})"
             )
-            risk_points += RiskScore.MAX_SCORE
             return RiskAssessment(
                 risk_score=RiskScore.MAX_SCORE,
                 risk_level=RiskLevel.CRITICAL,
@@ -146,7 +196,17 @@ class ItalyStrategy(BaseCountryStrategy):
                 reasons=reasons,
                 requires_review=False
             )
+        return None
 
+
+    def _check_debt_to_income(
+        self,
+        monthly_income: Decimal,
+        banking_data: BankingData,
+        reasons: list,
+        risk_points: int
+    ) -> int:
+        """Check debt-to-income ratio (max 35%)."""
         if banking_data.monthly_obligations:
             current_dti = self.calculate_debt_to_income_ratio(
                 monthly_income,
@@ -159,7 +219,16 @@ class ItalyStrategy(BaseCountryStrategy):
                     f"(max {self.MAX_DEBT_TO_INCOME_RATIO}%)"
                 )
                 risk_points += BusinessRules.RISK_SCORE_PENALTY_LOW_CREDIT
+        return risk_points
 
+
+    def _check_credit_score(
+        self,
+        banking_data: BankingData,
+        reasons: list,
+        risk_points: int
+    ) -> int:
+        """Check credit score and adjust risk points."""
         if banking_data.credit_score:
             if banking_data.credit_score < self.MIN_CREDIT_SCORE:
                 reasons.append(
@@ -170,12 +239,32 @@ class ItalyStrategy(BaseCountryStrategy):
             elif banking_data.credit_score >= CreditScore.HIGH_SCORE_THRESHOLD:
                 reasons.append("Excellent credit score")
                 risk_points -= BusinessRules.RISK_SCORE_ADJUSTMENT_GOOD_ACCOUNT_AGE
+        return risk_points
 
+
+    def _check_defaults(
+        self,
+        banking_data: BankingData,
+        reasons: list,
+        risk_points: int,
+        requires_review: bool
+    ) -> tuple[int, bool]:
+        """Check for active defaults."""
         if banking_data.has_defaults:
             reasons.append("Has active defaults in credit bureau")
             risk_points += BusinessRules.RISK_SCORE_PENALTY_DEFAULT
             requires_review = True
+        return risk_points, requires_review
 
+
+    def _check_payment_ratio(
+        self,
+        requested_amount: Decimal,
+        monthly_income: Decimal,
+        reasons: list,
+        risk_points: int
+    ) -> int:
+        """Check payment-to-income ratio."""
         payment_ratio = self.calculate_payment_to_income_ratio(
             requested_amount,
             monthly_income
@@ -187,8 +276,20 @@ class ItalyStrategy(BaseCountryStrategy):
                 f"(concerning if >{BusinessRules.HIGH_PAYMENT_RATIO_THRESHOLD_ITALY}%)"
             )
             risk_points += BusinessRules.RISK_SCORE_PENALTY_HIGH_DEBT
+        return risk_points
 
+
+    def _check_financial_stability(
+        self,
+        requested_amount: Decimal,
+        monthly_income: Decimal,
+        reasons: list,
+        risk_points: int,
+        requires_review: bool
+    ) -> tuple[int, bool]:
+        """Check financial stability (loan vs years of income)."""
         annual_income = monthly_income * BusinessRules.MONTHS_PER_YEAR_DECIMAL
+        
         if requested_amount > annual_income * BusinessRules.YEARS_FOR_STABILITY_CHECK_DECIMAL:
             reasons.append(
                 f"Requested amount exceeds {BusinessRules.YEARS_FOR_STABILITY_CHECK} years of annual income - "
@@ -196,7 +297,20 @@ class ItalyStrategy(BaseCountryStrategy):
             )
             risk_points += BusinessRules.RISK_SCORE_PENALTY_FINANCIAL_STABILITY_ITALY
             requires_review = True
+        
+        return risk_points, requires_review
 
+
+    def _determine_risk_level(
+        self,
+        risk_points: int,
+        requires_review: bool
+    ) -> tuple[int, str, str]:
+        """Determine final risk level and approval recommendation.
+        
+        Returns:
+            Tuple of (risk_score, risk_level, recommendation)
+        """
         risk_score = min(RiskScore.MAX_SCORE, max(RiskScore.MIN_SCORE, risk_points))
 
         if risk_score >= RiskScore.CRITICAL_THRESHOLD:
@@ -205,7 +319,6 @@ class ItalyStrategy(BaseCountryStrategy):
         elif risk_score >= RiskScore.HIGH_THRESHOLD:
             risk_level = RiskLevel.HIGH
             recommendation = ApprovalRecommendation.REVIEW
-            requires_review = True
         elif risk_score >= RiskScore.MEDIUM_THRESHOLD:
             risk_level = RiskLevel.MEDIUM
             recommendation = ApprovalRecommendation.REVIEW if requires_review else ApprovalRecommendation.APPROVE
@@ -213,16 +326,12 @@ class ItalyStrategy(BaseCountryStrategy):
             risk_level = RiskLevel.LOW
             recommendation = ApprovalRecommendation.APPROVE
 
-        return RiskAssessment(
-            risk_score=risk_score,
-            risk_level=risk_level,
-            approval_recommendation=recommendation,
-            reasons=reasons if reasons else ['Standard credit profile'],
-            requires_review=requires_review
-        )
+        return risk_score, risk_level, recommendation
+
 
     def get_document_type_name(self) -> str:
         return "Codice Fiscale"
+
 
     def get_required_fields(self) -> list:
         return super().get_required_fields()
